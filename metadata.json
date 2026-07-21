@@ -1,0 +1,6 @@
+{
+  "name": "SDMX Auto-Renew",
+  "description": "Automatiza la renovación de líneas IPTV en sdmx.vip",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
