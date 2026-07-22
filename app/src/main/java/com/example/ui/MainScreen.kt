@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -380,12 +381,12 @@ fun MainScreen(viewModel: MainViewModel) {
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
                         onClick = { viewModel.runManualCycle() },
                         enabled = !isLoading,
-                        modifier = Modifier.weight(2.5f).height(56.dp),
+                        modifier = Modifier.weight(1.8f).height(56.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = GeoPrimary,
                             contentColor = GeoSurface
@@ -393,11 +394,27 @@ fun MainScreen(viewModel: MainViewModel) {
                         shape = RoundedCornerShape(24.dp),
                         elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp)
                     ) {
-                        Text("EJECUTAR AHORA", fontWeight = FontWeight.Bold, fontSize = 15.sp, letterSpacing = 1.sp)
+                        Text("EJECUTAR", fontWeight = FontWeight.Bold, fontSize = 14.sp, letterSpacing = 1.sp)
+                    }
+                    Button(
+                        onClick = { viewModel.purgeTestUsers() },
+                        enabled = !isLoading,
+                        modifier = Modifier.weight(1.3f).height(56.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFC62828),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(24.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.CleaningServices, contentDescription = "Depurar", modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Depurar", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
                     }
                     Button(
                         onClick = { showAddDialog = true },
-                        modifier = Modifier.weight(1f).height(56.dp),
+                        modifier = Modifier.weight(1.1f).height(56.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = GeoOnBackground,
                             contentColor = GeoSurface
@@ -405,7 +422,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         shape = RoundedCornerShape(24.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Add, contentDescription = "Add User", modifier = Modifier.size(20.dp))
+                            Icon(Icons.Filled.Add, contentDescription = "Add User", modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Nuevo", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }

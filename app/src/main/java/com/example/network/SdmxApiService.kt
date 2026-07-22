@@ -217,7 +217,7 @@ class SdmxApiService {
         }
     }
     
-    suspend fun getTableIds(): Map<String, String> = withContext(Dispatchers.IO) {
+    suspend fun getTableRows(): List<Pair<String, String>> = withContext(Dispatchers.IO) {
         val urlBuilder = HttpUrl.Builder()
             .scheme("https")
             .host("sdmx.vip")
@@ -254,16 +254,16 @@ class SdmxApiService {
             .addHeader("Cookie", cookieJar.getCookieString())
             .build()
             
-        val map = mutableMapOf<String, String>()
+        val list = mutableListOf<Pair<String, String>>()
         try {
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext map
-                val jsonStr = response.body?.string() ?: return@withContext map
+                if (!response.isSuccessful) return@withContext list
+                val jsonStr = response.body?.string() ?: return@withContext list
                 
                 Log.d("SdmxApi", "Table JSON length: ${jsonStr.length}")
                 
                 val jsonResponse = JSONObject(jsonStr)
-                val dataArray = jsonResponse.optJSONArray("data") ?: return@withContext map
+                val dataArray = jsonResponse.optJSONArray("data") ?: return@withContext list
                 
                 val cleanRegex = Regex("<.*?>")
                 for (i in 0 until dataArray.length()) {
@@ -281,7 +281,7 @@ class SdmxApiService {
                         }
                         
                         if (cleanId.isNotEmpty() && cleanUsername.isNotEmpty()) {
-                            map[cleanUsername] = cleanId
+                            list.add(Pair(cleanUsername, cleanId))
                         }
                     }
                 }
@@ -289,8 +289,10 @@ class SdmxApiService {
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        return@withContext map
+        return@withContext list
     }
+
+    suspend fun getTableIds(): Map<String, String> = getTableRows().toMap()
 
     suspend fun verifyHealthCheck(context: Context?, sdUser: String, sdPass: String): Boolean = withContext(Dispatchers.IO) {
         context?.let { LogManager.addLog(it, "🔍 [Paso 1/3] Verificación previa: Login en panel SDMX...") }

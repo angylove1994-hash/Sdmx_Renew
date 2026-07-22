@@ -283,4 +283,67 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isLoading.value = false
         }
     }
+
+    fun purgeTestUsers() = viewModelScope.launch {
+        if (_isLoading.value) return@launch
+        _isLoading.value = true
+        addLog("🧹 [Depurar] Buscando cuentas que comiencen con 'Test'...")
+        try {
+            val user = userSdmx.value
+            val pass = passSdmx.value
+            if (user.isNullOrEmpty() || pass.isNullOrEmpty()) {
+                addLog("❌ [Depurar] Error: Credenciales SDMX no configuradas.")
+                return@launch
+            }
+
+            if (!api.login(getApplication(), user, pass)) {
+                addLog("❌ [Depurar] Error: No se pudo iniciar sesión en el panel SDMX.")
+                return@launch
+            }
+
+            addLog("🔎 [Depurar] Obteniendo lista de cuentas del panel...")
+            val allRows = api.getTableRows()
+
+            // STRICT MATCH: Only usernames starting with "Test" (case-insensitive)
+            val testUsers = allRows.filter { (username, _) ->
+                username.trim().startsWith("Test", ignoreCase = true)
+            }
+
+            if (testUsers.isEmpty()) {
+                addLog("ℹ️ [Depurar] No se encontraron cuentas que comiencen con 'Test'.")
+            } else {
+                val namesList = testUsers.map { it.first }.distinct().joinToString(", ")
+                addLog("⚠️ [Depurar] Cuentas 'Test' detectadas (${testUsers.size}): $namesList")
+
+                var deletedCount = 0
+                for ((testUsername, testId) in testUsers) {
+                    if (testId.isNotEmpty()) {
+                        addLog("🗑️ [Depurar] Eliminando '$testUsername' (ID: $testId)...")
+                        val ok = api.deleteLine(testId)
+                        if (ok) {
+                            addLog("✅ [Depurar] Cuenta '$testUsername' eliminada con éxito.")
+                            deletedCount++
+                        } else {
+                            addLog("❌ [Depurar] Error al eliminar '$testUsername' (ID: $testId).")
+                        }
+                        delay(500)
+                    }
+                }
+                addLog("🎉 [Depurar] Proceso finalizado. $deletedCount de ${testUsers.size} cuentas 'Test' eliminadas.")
+
+                // Remove from local database as well if present
+                val testNamesSet = testUsers.map { it.first.trim().lowercase() }.toSet()
+                val currentLocalUsers = users.value.toMutableList()
+                val removed = currentLocalUsers.removeAll { it.usuario.trim().lowercase() in testNamesSet }
+                if (removed) {
+                    db.saveUsers(currentLocalUsers)
+                    addLog("🧹 [Depurar] Cuentas removidas también de la base de datos local.")
+                }
+            }
+        } catch (e: Exception) {
+            addLog("❌ [Depurar] Error inesperado: ${e.message}")
+        } finally {
+            _isLoading.value = false
+        }
+    }
 }
