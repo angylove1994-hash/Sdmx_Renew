@@ -19,6 +19,7 @@ class PreferencesManager(private val context: Context) {
         val KEY_AGGRESSIVE_MODE = booleanPreferencesKey("aggressive_mode_enabled")
         val KEY_LAST_EXECUTION = longPreferencesKey("last_execution_time")
         val KEY_NEXT_EXECUTION = longPreferencesKey("next_execution_time")
+        val KEY_NTFY_TOPIC = stringPreferencesKey("ntfy_topic")
         
         // Fast SharedPreferences fallback for immediate synchronous access in receivers/services
         private const val SYNC_PREFS_NAME = "sdmx_sync_prefs"
@@ -28,6 +29,18 @@ class PreferencesManager(private val context: Context) {
         private const val SYNC_KEY_AGGRESSIVE = "aggressive_mode"
         private const val SYNC_KEY_LAST_RUN = "last_run"
         private const val SYNC_KEY_NEXT_RUN = "next_run"
+        private const val SYNC_KEY_NTFY_TOPIC = "ntfy_topic"
+        const val DEFAULT_NTFY_TOPIC = "Gato_Negro_Reportes"
+
+        fun getNtfyTopic(context: Context): String {
+            val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
+            return sp.getString(SYNC_KEY_NTFY_TOPIC, DEFAULT_NTFY_TOPIC) ?: DEFAULT_NTFY_TOPIC
+        }
+
+        fun setSyncNtfyTopic(context: Context, topic: String) {
+            val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
+            sp.edit().putString(SYNC_KEY_NTFY_TOPIC, topic.ifEmpty { DEFAULT_NTFY_TOPIC }).apply()
+        }
 
         fun getSyncCredentials(context: Context): Pair<String, String> {
             val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
@@ -68,6 +81,15 @@ class PreferencesManager(private val context: Context) {
     val isAggressiveMode: Flow<Boolean> = context.dataStore.data.map { it[KEY_AGGRESSIVE_MODE] ?: true }
     val lastExecutionTime: Flow<Long> = context.dataStore.data.map { it[KEY_LAST_EXECUTION] ?: 0L }
     val nextExecutionTime: Flow<Long> = context.dataStore.data.map { it[KEY_NEXT_EXECUTION] ?: 0L }
+    val ntfyTopic: Flow<String> = context.dataStore.data.map { it[KEY_NTFY_TOPIC] ?: DEFAULT_NTFY_TOPIC }
+
+    suspend fun saveNtfyTopic(topic: String) {
+        val cleanTopic = topic.trim().ifEmpty { DEFAULT_NTFY_TOPIC }
+        context.dataStore.edit {
+            it[KEY_NTFY_TOPIC] = cleanTopic
+        }
+        setSyncNtfyTopic(context, cleanTopic)
+    }
 
     suspend fun saveCredentials(user: String, pass: String) {
         context.dataStore.edit {

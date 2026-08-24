@@ -1,15 +1,22 @@
 package com.example.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -25,10 +32,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.BatteryOptimizationHelper
+import com.example.data.PreferencesManager
 import com.example.data.UserModel
 import com.example.ui.theme.*
 import com.example.worker.SdmxAlarmScheduler
-import com.example.worker.SdmxWorker
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -40,6 +47,7 @@ fun MainScreen(viewModel: MainViewModel) {
     val isAggressiveMode by viewModel.isAggressiveMode.collectAsState()
     val lastExecutionTime by viewModel.lastExecutionTime.collectAsState()
     val nextExecutionTime by viewModel.nextExecutionTime.collectAsState()
+    val ntfyTopic by viewModel.ntfyTopic.collectAsState()
     val users by viewModel.users.collectAsState()
     val logs by viewModel.logs.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -50,7 +58,7 @@ fun MainScreen(viewModel: MainViewModel) {
     var showHttpSettingsDialog by remember { mutableStateOf(false) }
     var isIgnoringBattery by remember { mutableStateOf(BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)) }
 
-    // Re-check battery status periodically
+    // Re-check battery status
     LaunchedEffect(Unit) {
         isIgnoringBattery = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
     }
@@ -63,580 +71,779 @@ fun MainScreen(viewModel: MainViewModel) {
         if (nextExecutionTime > 0) timeFormat.format(Date(nextExecutionTime)) else "En ~${intervalHours}h"
     }
 
-    Column(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(GeoBackground)
     ) {
-        // App Header
-        Surface(
-            color = GeoSurface,
-            shadowElevation = 2.dp,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
+        val isWideOrTv = maxWidth >= 650.dp
+
+        if (isWideOrTv) {
+            // TV BOX & LANDSCAPE DUAL-PANE LAYOUT
+            Row(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                    .fillMaxSize()
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                // LEFT PANE: Controls, Configuration & Quick Actions
+                Surface(
+                    color = GeoSurface,
+                    shape = RoundedCornerShape(16.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, GeoOutline),
+                    modifier = Modifier
+                        .widthIn(min = 340.dp, max = 390.dp)
+                        .fillMaxHeight()
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(GeoPrimary),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                "RA",
-                                color = GeoSurface,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(
-                            modifier = Modifier.clickable { showAdminCredentialsDialog = true }
-                        ) {
-                            Text(
-                                "SDMX Auto-Renew 24/7",
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = GeoOnBackground
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    "Admin: $userSdmx",
-                                    fontSize = 12.sp,
-                                    color = GeoOnSurfaceVariant,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Settings,
-                                    contentDescription = "Configurar admin",
-                                    tint = GeoOnSurfaceVariant,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-                        }
-                    }
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            onClick = { showHttpSettingsDialog = true },
-                            shape = RoundedCornerShape(50),
-                            color = GeoPrimary,
-                            contentColor = GeoSurface
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Http,
-                                    contentDescription = "Configuración HTTP",
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    "HTTP",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.5.sp
-                                )
-                            }
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(if (isAggressiveMode) GeoSecondaryContainer else GeoSurfaceVariant)
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isAggressiveMode) GeoOnSecondaryContainer else GeoOnSurfaceVariant)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    if (isAggressiveMode) "24/7 ON" else "PAUSED",
-                                    color = if (isAggressiveMode) GeoOnSecondaryContainer else GeoOnSurfaceVariant,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 1.sp
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Battery Alert Banner (if battery optimization is active)
-                AnimatedVisibility(visible = !isIgnoringBattery) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF3E1F1F)),
-                        shape = RoundedCornerShape(10.dp),
+                    Column(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 10.dp)
-                            .clickable {
-                                BatteryOptimizationHelper.requestIgnoreBatteryOptimizations(context)
-                                isIgnoringBattery = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
-                            }
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
+                        // Header Box
                         Row(
-                            modifier = Modifier.padding(10.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.BatteryAlert,
-                                contentDescription = "Batería",
-                                tint = Color(0xFFFF6B6B),
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "¡Evita que Android suspenda la app!",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp,
-                                    color = Color(0xFFFFD2D2)
-                                )
-                                Text(
-                                    "Toca aquí para desactivar la optimización de batería y permitir renovación continua 24/7.",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFFE0B0B0)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Info & Control Blocks
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(GeoSurfaceVariant)
-                        .padding(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    var expanded by remember { mutableStateOf(false) }
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { expanded = true }
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            "INTERVALO",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = GeoOnSurfaceVariant.copy(alpha = 0.7f),
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            "Cada $intervalHours Horas",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = GeoOnBackground
-                        )
-                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                            listOf("1", "2", "4", "6", "12", "24", "48").forEach { h ->
-                                DropdownMenuItem(
-                                    text = { Text("Cada $h horas") },
-                                    onClick = {
-                                        viewModel.saveInterval(h)
-                                        expanded = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(32.dp)
-                            .background(GeoOutline)
-                    )
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            "PRÓXIMA RENOVACIÓN",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = GeoOnSurfaceVariant.copy(alpha = 0.7f),
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            nextRunText,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = GeoPrimary
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Aggressive 24/7 Mode Switch Row
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(GeoSurfaceVariant.copy(alpha = 0.5f))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Bolt,
-                            contentDescription = "Modo Agresivo",
-                            tint = if (isAggressiveMode) GeoPrimary else GeoOnSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Column {
-                            Text(
-                                "Modo Agresivo 24/7 (Servicio Persistente + Alarma)",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = GeoOnBackground
-                            )
-                            Text(
-                                "Último ciclo: $lastRunText",
-                                fontSize = 10.sp,
-                                color = GeoOnSurfaceVariant
-                            )
-                        }
-                    }
-                    Switch(
-                        checked = isAggressiveMode,
-                        onCheckedChange = { viewModel.setAggressiveMode(it) },
-                        modifier = Modifier.scale(0.8f)
-                    )
-                }
-            }
-        }
-
-        // Content
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(16.dp)
-        ) {
-            Text(
-                "USUARIOS ACTIVOS (${users.size})",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = GeoOnSurfaceVariant,
-                letterSpacing = 1.5.sp,
-                modifier = Modifier.padding(start = 4.dp, bottom = 12.dp)
-            )
-
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(users) { user ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .shadow(elevation = 1.dp, shape = RoundedCornerShape(16.dp))
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(GeoSurface)
-                            .border(1.dp, GeoOutline, RoundedCornerShape(16.dp))
-                            .clickable { userToEdit = user }
-                            .padding(16.dp)
-                    ) {
-                        Column {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clickable { showAdminCredentialsDialog = true }
+                                    .focusable()
                             ) {
-                                Text(
-                                    user.usuario,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = GeoOnBackground
-                                )
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(GeoPrimary),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    if (user.adultos) {
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(GeoSecondaryContainer)
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                                        ) {
-                                            Text(
-                                                "18+",
-                                                color = GeoOnSecondaryContainer,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                    IconButton(
-                                        onClick = { userToEdit = user },
-                                        modifier = Modifier.size(24.dp)
-                                    ) {
+                                    Text("RA", color = GeoSurface, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        "SDMX Auto-Renew",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = GeoOnBackground
+                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            "Admin: ${userSdmx ?: "No config"}",
+                                            fontSize = 11.sp,
+                                            color = GeoOnSurfaceVariant,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
                                         Icon(
-                                            imageVector = Icons.Default.Edit,
-                                            contentDescription = "Editar",
+                                            imageVector = Icons.Default.Settings,
+                                            contentDescription = "Configurar admin",
                                             tint = GeoOnSurfaceVariant,
-                                            modifier = Modifier.size(16.dp)
+                                            modifier = Modifier.size(12.dp)
                                         )
                                     }
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(8.dp))
-
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    "ID: ${user.id.ifEmpty { "Pendiente" }}",
-                                    fontSize = 12.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = GeoOnSurfaceVariant
-                                )
-                                Text(
-                                    "Vence: ${user.vencimiento.substringBefore("T")}",
-                                    fontSize = 12.sp,
+                                Surface(
+                                    onClick = { showHttpSettingsDialog = true },
+                                    shape = RoundedCornerShape(50),
                                     color = GeoPrimary,
-                                    fontWeight = FontWeight.Medium
-                                )
+                                    contentColor = GeoSurface,
+                                    modifier = Modifier.focusable()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Http,
+                                            contentDescription = "HTTP",
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text("HTTP", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(if (isAggressiveMode) GeoSecondaryContainer else GeoSurfaceVariant)
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(if (isAggressiveMode) GeoOnSecondaryContainer else GeoOnSurfaceVariant)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            if (isAggressiveMode) "24/7 ON" else "PAUSADO",
+                                            color = if (isAggressiveMode) GeoOnSecondaryContainer else GeoOnSurfaceVariant,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-            }
 
-            // Bottom Actions: Import/Export Database & Depurar Cuentas Test
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                var showPurgeConfirmation by remember { mutableStateOf(false) }
-
-                DatabaseBackupButtons(
-                    viewModel = viewModel,
-                    modifier = Modifier.weight(1f)
-                )
-
-                // Purge "Test..." Users Button
-                OutlinedButton(
-                    onClick = { showPurgeConfirmation = true },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE57373)),
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CleaningServices,
-                        contentDescription = "Depurar",
-                        modifier = Modifier.size(16.dp),
-                        tint = Color(0xFFE57373)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        "Depurar 'Test'",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFE57373)
-                    )
-                }
-
-                if (showPurgeConfirmation) {
-                    AlertDialog(
-                        onDismissRequest = { showPurgeConfirmation = false },
-                        title = { Text("¿Eliminar cuentas 'Test'?", fontWeight = FontWeight.Bold) },
-                        text = {
-                            Text("Esta acción buscará y eliminará del panel SDMX y de la app todas las líneas que comiencen con el prefijo 'Test'.\n\n¿Deseas continuar?")
-                        },
-                        confirmButton = {
-                            Button(
-                                onClick = {
-                                    showPurgeConfirmation = false
-                                    viewModel.purgeTestUsers()
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+                        // Battery Alert (Compact)
+                        AnimatedVisibility(visible = !isIgnoringBattery) {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF3E1F1F)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        BatteryOptimizationHelper.requestIgnoreBatteryOptimizations(context)
+                                        isIgnoringBattery = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
+                                    }
+                                    .focusable()
                             ) {
-                                Text("Sí, Eliminar", color = Color.White, fontWeight = FontWeight.Bold)
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showPurgeConfirmation = false }) {
-                                Text("Cancelar")
+                                Row(
+                                    modifier = Modifier.padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.BatteryAlert,
+                                        contentDescription = "Batería",
+                                        tint = Color(0xFFFF6B6B),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        "Toca para desactivar ahorro de batería 24/7",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 10.sp,
+                                        color = Color(0xFFFFD2D2)
+                                    )
+                                }
                             }
                         }
-                    )
-                }
-            }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Manual Run & Add User
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Button(
-                    onClick = { viewModel.runManualCycle() },
-                    enabled = !isLoading,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = GeoSurfaceVariant,
-                        contentColor = GeoOnBackground
-                    )
-                ) {
-                    if (isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = GeoPrimary,
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Ejecutando...", fontWeight = FontWeight.SemiBold)
-                    } else {
-                        Icon(Icons.Default.Refresh, contentDescription = "Manual Run", modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Renovar Ahora", fontWeight = FontWeight.SemiBold)
-                    }
-                }
-
-                Button(
-                    onClick = { showAddDialog = true },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = GeoPrimary,
-                        contentColor = GeoSurface
-                    )
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Add User", modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Nuevo Usuario", fontWeight = FontWeight.Bold)
-                }
-            }
-
-            // Real-Time Log Viewer Component
-            var showLogsExpanded by remember { mutableStateOf(false) }
-            
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Surface(
-                color = GeoSurfaceVariant,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Interval & Next Execution Block
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(GeoSurfaceVariant)
+                                .padding(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            var expanded by remember { mutableStateOf(false) }
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { expanded = true }
+                                    .focusable()
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    "INTERVALO",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = GeoOnSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                                Text(
+                                    "Cada $intervalHours h ▾",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = GeoOnBackground
+                                )
+                                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                                    listOf("1", "2", "4", "6", "12", "24", "48").forEach { h ->
+                                        DropdownMenuItem(
+                                            text = { Text("Cada $h horas") },
+                                            onClick = {
+                                                viewModel.saveInterval(h)
+                                                expanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                             Box(
                                 modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(GeoPrimary)
+                                    .width(1.dp)
+                                    .height(28.dp)
+                                    .background(GeoOutline)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                "REGISTRO DE ACTIVIDAD (${logs.size})",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = GeoOnBackground,
-                                letterSpacing = 1.sp
-                            )
-                        }
-                        Row {
-                            TextButton(
-                                onClick = { showLogsExpanded = !showLogsExpanded },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
                             ) {
                                 Text(
-                                    if (showLogsExpanded) "Minimizar" else "Expandir",
-                                    fontSize = 11.sp,
+                                    "PRÓXIMA RENOVACIÓN",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = GeoOnSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                                Text(
+                                    nextRunText,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
                                     color = GeoPrimary
                                 )
                             }
-                            TextButton(
-                                onClick = { viewModel.clearLogs() },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    "Limpiar",
-                                    fontSize = 11.sp,
-                                    color = GeoOnSurfaceVariant
+                        }
+
+                        // Aggressive Switch Row
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(GeoSurfaceVariant.copy(alpha = 0.5f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Bolt,
+                                    contentDescription = "24/7",
+                                    tint = if (isAggressiveMode) GeoPrimary else GeoOnSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
                                 )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text("Modo Agresivo 24/7", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = GeoOnBackground)
+                                    Text("Último: $lastRunText", fontSize = 9.sp, color = GeoOnSurfaceVariant)
+                                }
+                            }
+                            Switch(
+                                checked = isAggressiveMode,
+                                onCheckedChange = { viewModel.setAggressiveMode(it) },
+                                modifier = Modifier.size(width = 40.dp, height = 24.dp).focusable()
+                            )
+                        }
+
+                        // Push Notifications (ntfy.sh) Status Card
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = GeoSurfaceVariant.copy(alpha = 0.7f)),
+                            shape = RoundedCornerShape(10.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, GeoOutline.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.NotificationsActive,
+                                            contentDescription = "Ntfy",
+                                            tint = GeoPrimary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            "Push Remoto (ntfy.sh)",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = GeoOnBackground
+                                        )
+                                    }
+                                    TextButton(
+                                        onClick = { viewModel.sendTestNtfyPush() },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                        modifier = Modifier.height(26.dp).focusable()
+                                    ) {
+                                        Text("Probar Push", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = GeoPrimary)
+                                    }
+                                }
+                                Text(
+                                    "Canal: https://ntfy.sh/$ntfyTopic",
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = GeoOnSurfaceVariant,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+
+                        // Primary Action Buttons
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { viewModel.runManualCycle() },
+                                enabled = !isLoading,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp)
+                                    .focusable(),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = GeoPrimary,
+                                    contentColor = GeoSurface
+                                )
+                            ) {
+                                if (isLoading) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = GeoSurface, strokeWidth = 2.dp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Procesando...", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                } else {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = "Run", modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Renovar Ahora", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            Button(
+                                onClick = { showAddDialog = true },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp)
+                                    .focusable(),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = GeoSurfaceVariant,
+                                    contentColor = GeoOnBackground
+                                )
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(16.dp), tint = GeoPrimary)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Nuevo Usuario", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+
+                        // Secondary Buttons: Database Backup & Depurar
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            var showPurgeConfirmation by remember { mutableStateOf(false) }
+
+                            DatabaseBackupButtons(
+                                viewModel = viewModel,
+                                modifier = Modifier.weight(1.3f)
+                            )
+
+                            OutlinedButton(
+                                onClick = { showPurgeConfirmation = true },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .focusable(),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE57373)),
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CleaningServices,
+                                    contentDescription = "Depurar",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = Color(0xFFE57373)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Depurar 'Test'", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE57373))
+                            }
+
+                            if (showPurgeConfirmation) {
+                                AlertDialog(
+                                    onDismissRequest = { showPurgeConfirmation = false },
+                                    title = { Text("¿Eliminar cuentas 'Test'?", fontWeight = FontWeight.Bold) },
+                                    text = {
+                                        Text("Esta acción buscará y eliminará del panel SDMX y de la base de datos todas las líneas que comiencen con el prefijo 'Test'.\n\n¿Deseas continuar?")
+                                    },
+                                    confirmButton = {
+                                        Button(
+                                            onClick = {
+                                                showPurgeConfirmation = false
+                                                viewModel.purgeTestUsers()
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+                                        ) {
+                                            Text("Sí, Eliminar", color = Color.White, fontWeight = FontWeight.Bold)
+                                        }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = { showPurgeConfirmation = false }) {
+                                            Text("Cancelar")
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // RIGHT PANE: Split into Users (Top 42%) and Live Terminal Logs (Bottom 58%)
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // 1. ACTIVE USERS SECTION
+                    Surface(
+                        color = GeoSurface,
+                        shape = RoundedCornerShape(16.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, GeoOutline),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(0.42f)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Group,
+                                        contentDescription = "Usuarios",
+                                        tint = GeoPrimary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        "USUARIOS ACTIVOS (${users.size})",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = GeoOnBackground,
+                                        letterSpacing = 1.sp
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { showAddDialog = true },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp).focusable()
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(14.dp), tint = GeoPrimary)
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text("Agregar", fontSize = 11.sp, color = GeoPrimary, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            if (users.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(GeoSurfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(10.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "No hay usuarios registrados. Presiona '+ Agregar' para registrar líneas a renovar.",
+                                        fontSize = 12.sp,
+                                        color = GeoOnSurfaceVariant
+                                    )
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(users) { user ->
+                                        UserItemCard(user = user, onEdit = { userToEdit = user })
+                                    }
+                                }
                             }
                         }
                     }
 
-                    if (logs.isEmpty()) {
-                        Text(
-                            "Sin actividad registrada aún.",
-                            fontSize = 12.sp,
-                            color = GeoOnSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-                    } else {
-                        val displayLogs = if (showLogsExpanded) logs.take(30) else logs.take(3)
-                        LazyColumn(
+                    // 2. LIVE TERMINAL / REGISTRO DE ACTIVIDAD (FULL CONSOLE VIEW FOR TV BOX)
+                    LiveLogConsole(
+                        logs = logs,
+                        ntfyTopic = ntfyTopic,
+                        onClearLogs = { viewModel.clearLogs() },
+                        onTestNtfy = { viewModel.sendTestNtfyPush() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(0.58f)
+                    )
+                }
+            }
+        } else {
+            // PORTRAIT MOBILE LAYOUT
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(GeoBackground)
+            ) {
+                // Mobile Header
+                Surface(
+                    color = GeoSurface,
+                    shadowElevation = 2.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable { showAdminCredentialsDialog = true }
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(GeoPrimary),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("RA", color = GeoSurface, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text("SDMX Auto-Renew", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = GeoOnBackground)
+                                    Text("Admin: ${userSdmx ?: ""}", fontSize = 11.sp, color = GeoOnSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                }
+                            }
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Surface(
+                                    onClick = { showHttpSettingsDialog = true },
+                                    shape = RoundedCornerShape(50),
+                                    color = GeoPrimary,
+                                    contentColor = GeoSurface
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Default.Http, contentDescription = "HTTP", modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("HTTP", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+
+                        // Interval & Next run
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = if (showLogsExpanded) 200.dp else 65.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(GeoSurfaceVariant)
+                                .padding(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            items(displayLogs) { log ->
-                                Text(
-                                    text = log,
-                                    fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = if (log.contains("❌") || log.contains("Error")) Color(0xFFFF8A80)
-                                           else if (log.contains("✅") || log.contains("🎉")) Color(0xFFB9F6CA)
-                                           else GeoOnBackground
+                            var expanded by remember { mutableStateOf(false) }
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { expanded = true }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text("INTERVALO", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = GeoOnSurfaceVariant)
+                                Text("Cada $intervalHours h ▾", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = GeoOnBackground)
+                                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                                    listOf("1", "2", "4", "6", "12", "24", "48").forEach { h ->
+                                        DropdownMenuItem(
+                                            text = { Text("Cada $h horas") },
+                                            onClick = {
+                                                viewModel.saveInterval(h)
+                                                expanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text("PRÓXIMA RENOVACIÓN", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = GeoOnSurfaceVariant)
+                                Text(nextRunText, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = GeoPrimary)
+                            }
+                        }
+
+                        // Aggressive Switch Row
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(GeoSurfaceVariant.copy(alpha = 0.5f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Bolt,
+                                    contentDescription = "24/7",
+                                    tint = if (isAggressiveMode) GeoPrimary else GeoOnSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
                                 )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Modo 24/7 Continuo", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = GeoOnBackground)
+                            }
+                            Switch(
+                                checked = isAggressiveMode,
+                                onCheckedChange = { viewModel.setAggressiveMode(it) },
+                                modifier = Modifier.size(width = 40.dp, height = 24.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Mobile Body
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Actions
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { viewModel.runManualCycle() },
+                            enabled = !isLoading,
+                            modifier = Modifier.weight(1f).height(46.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = GeoPrimary, contentColor = GeoSurface)
+                        ) {
+                            if (isLoading) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = GeoSurface, strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Ejecutando...", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            } else {
+                                Icon(Icons.Default.Refresh, contentDescription = "Run", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Renovar Ahora", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Button(
+                            onClick = { showAddDialog = true },
+                            modifier = Modifier.weight(1f).height(46.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = GeoSurfaceVariant, contentColor = GeoOnBackground)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(16.dp), tint = GeoPrimary)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Nuevo Usuario", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+
+                    // Backup & Purge Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        var showPurgeConfirmation by remember { mutableStateOf(false) }
+
+                        DatabaseBackupButtons(viewModel = viewModel, modifier = Modifier.weight(1.3f))
+
+                        OutlinedButton(
+                            onClick = { showPurgeConfirmation = true },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE57373)),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Default.CleaningServices, contentDescription = "Depurar", modifier = Modifier.size(14.dp), tint = Color(0xFFE57373))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("Depurar 'Test'", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE57373))
+                        }
+
+                        if (showPurgeConfirmation) {
+                            AlertDialog(
+                                onDismissRequest = { showPurgeConfirmation = false },
+                                title = { Text("¿Eliminar cuentas 'Test'?", fontWeight = FontWeight.Bold) },
+                                text = {
+                                    Text("Esta acción buscará y eliminará del panel SDMX y de la app todas las líneas que comiencen con el prefijo 'Test'.\n\n¿Deseas continuar?")
+                                },
+                                confirmButton = {
+                                    Button(
+                                        onClick = {
+                                            showPurgeConfirmation = false
+                                            viewModel.purgeTestUsers()
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+                                    ) {
+                                        Text("Sí, Eliminar", color = Color.White, fontWeight = FontWeight.Bold)
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showPurgeConfirmation = false }) {
+                                        Text("Cancelar")
+                                    }
+                                }
+                            )
+                        }
+                    }
+
+                    // Users List (Weight 1f)
+                    Surface(
+                        color = GeoSurface,
+                        shape = RoundedCornerShape(14.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, GeoOutline),
+                        modifier = Modifier.weight(1f).fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.fillMaxSize().padding(10.dp)) {
+                            Text(
+                                "USUARIOS ACTIVOS (${users.size})",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = GeoOnSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+                            if (users.isEmpty()) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("Sin usuarios registrados.", fontSize = 12.sp, color = GeoOnSurfaceVariant)
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    items(users) { user ->
+                                        UserItemCard(user = user, onEdit = { userToEdit = user })
+                                    }
+                                }
                             }
                         }
                     }
+
+                    // Bottom Mobile Logs Console
+                    LiveLogConsole(
+                        logs = logs,
+                        ntfyTopic = ntfyTopic,
+                        onClearLogs = { viewModel.clearLogs() },
+                        onTestNtfy = { viewModel.sendTestNtfyPush() },
+                        modifier = Modifier.fillMaxWidth().height(180.dp)
+                    )
                 }
             }
         }
     }
 
+    // Dialogs
     if (showAddDialog) {
         AddUserDialog(
             onDismissRequest = { showAddDialog = false },
@@ -684,7 +891,237 @@ fun MainScreen(viewModel: MainViewModel) {
     }
 }
 
-// Extension modifier for scale
-private fun Modifier.scale(scale: Float): Modifier = this.then(
-    Modifier.size(width = (51 * scale).dp, height = (31 * scale).dp)
-)
+// User item component with high-contrast card styling for TV and Phone
+@Composable
+private fun UserItemCard(
+    user: UserModel,
+    onEdit: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(GeoSurfaceVariant)
+            .border(1.dp, GeoOutline, RoundedCornerShape(12.dp))
+            .clickable { onEdit() }
+            .focusable()
+            .padding(10.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        user.usuario,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = GeoOnBackground
+                    )
+                    if (user.adultos) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(GeoSecondaryContainer)
+                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                        ) {
+                            Text(
+                                "18+",
+                                color = GeoOnSecondaryContainer,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                IconButton(
+                    onClick = onEdit,
+                    modifier = Modifier.size(24.dp).focusable()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Editar",
+                        tint = GeoPrimary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    "ID: ${user.id.ifEmpty { "Pendiente" }}",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = GeoOnSurfaceVariant
+                )
+                Text(
+                    "Vence: ${user.vencimiento.substringBefore("T")}",
+                    fontSize = 11.sp,
+                    color = GeoPrimary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    }
+}
+
+// Live Terminal Console Component optimized for TV Box and Mobile
+@Composable
+private fun LiveLogConsole(
+    logs: List<String>,
+    ntfyTopic: String,
+    onClearLogs: () -> Unit,
+    onTestNtfy: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val listState = rememberLazyListState()
+
+    Surface(
+        color = Color(0xFF0F141C),
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF232D3B)),
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp)
+        ) {
+            // Console Top Bar
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF00E676))
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        "CONSOLA DE EVENTOS & LOGS (${logs.size})",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFE2E8F0),
+                        letterSpacing = 1.sp
+                    )
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Copy to clipboard
+                    IconButton(
+                        onClick = {
+                            try {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = ClipData.newPlainText("SDMX Logs", logs.reversed().joinToString("\n"))
+                                clipboard.setPrimaryClip(clip)
+                                Toast.makeText(context, "Logs copiados al portapapeles", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Error al copiar: ${e.message}", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.size(26.dp).focusable()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "Copiar",
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+
+                    // Test push notification
+                    IconButton(
+                        onClick = onTestNtfy,
+                        modifier = Modifier.size(26.dp).focusable()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Send,
+                            contentDescription = "Probar Ntfy",
+                            tint = GeoPrimary,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+
+                    // Clear logs
+                    IconButton(
+                        onClick = onClearLogs,
+                        modifier = Modifier.size(26.dp).focusable()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = "Limpiar",
+                            tint = Color(0xFFE57373),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+
+            Divider(
+                color = Color(0xFF1E293B),
+                modifier = Modifier.padding(vertical = 6.dp)
+            )
+
+            // Console output text
+            if (logs.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "Esperando actividad... Las operaciones de renovación y respuestas HTTP se mostrarán aquí en tiempo real.",
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = Color(0xFF64748B)
+                    )
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    items(logs) { log ->
+                        val textColor = when {
+                            log.contains("❌") || log.contains("Error") || log.contains("Fallo") -> Color(0xFFFF6B6B)
+                            log.contains("✅") || log.contains("🎉") || log.contains("exitosamente") -> Color(0xFF4ADE80)
+                            log.contains("📲") || log.contains("Ntfy") -> Color(0xFF38BDF8)
+                            log.contains("⚠️") -> Color(0xFFFBBF24)
+                            log.contains("🚀") || log.contains("Iniciando") -> Color(0xFFA78BFA)
+                            log.contains("🗑️") || log.contains("Depurar") -> Color(0xFFFB7185)
+                            else -> Color(0xFFCBD5E1)
+                        }
+
+                        Text(
+                            text = log,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = textColor,
+                            lineHeight = 15.sp,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        }
+    }
+}

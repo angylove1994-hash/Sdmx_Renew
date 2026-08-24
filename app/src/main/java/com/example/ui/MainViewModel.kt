@@ -31,6 +31,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isAggressiveMode = prefs.isAggressiveMode.stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val lastExecutionTime = prefs.lastExecutionTime.stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
     val nextExecutionTime = prefs.nextExecutionTime.stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
+    val ntfyTopic = prefs.ntfyTopic.stateIn(viewModelScope, SharingStarted.Eagerly, PreferencesManager.DEFAULT_NTFY_TOPIC)
     
     val users = db.users
 
@@ -323,6 +324,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addLog("❌ [Depurar] Error inesperado: ${e.message}")
         } finally {
             _isLoading.value = false
+        }
+    }
+
+    fun saveNtfyTopic(topic: String) {
+        viewModelScope.launch {
+            prefs.saveNtfyTopic(topic)
+            addLog("⚙️ [Ntfy.sh] Canal de notificaciones actualizado a: '${topic.ifEmpty { PreferencesManager.DEFAULT_NTFY_TOPIC }}'")
+        }
+    }
+
+    fun sendTestNtfyPush() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                addLog("📲 [Ntfy.sh] Enviando notificación de prueba a https://ntfy.sh/${ntfyTopic.value}...")
+                val success = com.example.notifications.NtfyManager.sendExecutionReport(
+                    context = getApplication(),
+                    isSuccess = true,
+                    summaryTitle = "Prueba de Conexión Exitosa",
+                    summaryDetails = "Este es un mensaje de prueba desde tu TV Box / Dispositivo Android para verificar que las alertas push funcionan correctamente.",
+                    recentLogs = LogManager.getLogs(getApplication())
+                )
+                if (success) {
+                    addLog("✅ [Ntfy.sh] Notificación de prueba enviada con éxito. Revisa https://ntfy.sh/${ntfyTopic.value}")
+                } else {
+                    addLog("❌ [Ntfy.sh] No se pudo enviar la notificación de prueba.")
+                }
+            } catch (e: Exception) {
+                addLog("❌ [Ntfy.sh] Error en prueba: ${e.message}")
+            } finally {
+                _isLoading.value = false
+            }
         }
     }
 }

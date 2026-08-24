@@ -8,6 +8,7 @@ import com.example.data.LogManager
 import com.example.data.PreferencesManager
 import com.example.network.SdmxApiService
 import com.example.notifications.NotificationHelper
+import com.example.notifications.NtfyManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -57,6 +58,19 @@ object SdmxExecutionEngine {
             LogManager.addLog(context, err)
             val notificationHelper = NotificationHelper(context)
             notificationHelper.showError("Fallo crítico en ciclo: ${e.message}")
+
+            try {
+                NtfyManager.sendExecutionReport(
+                    context = context,
+                    isSuccess = false,
+                    summaryTitle = "Error Crítico ($triggerSource)",
+                    summaryDetails = "Excepción: ${e.message}",
+                    recentLogs = LogManager.getLogs(context)
+                )
+            } catch (t: Throwable) {
+                t.printStackTrace()
+            }
+
             return@withContext RenewalExecutionResult(
                 success = false,
                 renewedCount = 0,
@@ -102,9 +116,20 @@ object SdmxExecutionEngine {
         // Step 1: Health check
         val healthCheckOk = api.verifyHealthCheck(context, user, pass)
         if (!healthCheckOk) {
-            val msg = "❌ [$triggerSource] Verificación previa fallida. No se pudo validar acceso al panel."
+            val msg = "❌ [$triggerSource] Verificación previa fallida. No se pudo validar acceso al panel SDMX."
             LogManager.addLog(context, msg)
             notificationHelper.showError("Verificación previa fallida. Revisa el log.")
+            try {
+                NtfyManager.sendExecutionReport(
+                    context = context,
+                    isSuccess = false,
+                    summaryTitle = "Fallo en Verificación Previa ($triggerSource)",
+                    summaryDetails = "No se pudo iniciar sesión o contactar al panel SDMX para el usuario '$user'.",
+                    recentLogs = LogManager.getLogs(context)
+                )
+            } catch (t: Throwable) {
+                t.printStackTrace()
+            }
             return RenewalExecutionResult(false, 0, 0, msg)
         }
 
@@ -213,6 +238,18 @@ object SdmxExecutionEngine {
         val successMsg = "🎉 [$triggerSource] Ciclo completado: $procesados de ${vigentes.size} cuentas renovadas exitosamente. Próxima ejecución en $hoursConfig horas."
         LogManager.addLog(context, successMsg)
         notificationHelper.showSuccess("Ciclo completado. $procesados/${vigentes.size} cuentas renovadas. Próx: $hoursConfig hrs.")
+
+        try {
+            NtfyManager.sendExecutionReport(
+                context = context,
+                isSuccess = (procesados == vigentes.size),
+                summaryTitle = if (procesados == vigentes.size) "Renovación Exitosa ($procesados/${vigentes.size})" else "Renovación Parcial ($procesados/${vigentes.size})",
+                summaryDetails = "$procesados de ${vigentes.size} cuentas renovadas. Próxima ejecución en $hoursConfig horas. Activado por: $triggerSource.",
+                recentLogs = LogManager.getLogs(context)
+            )
+        } catch (t: Throwable) {
+            t.printStackTrace()
+        }
 
         return RenewalExecutionResult(
             success = true,

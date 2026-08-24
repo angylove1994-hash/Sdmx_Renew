@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Http
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.*
@@ -22,6 +23,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.HttpConfigStorage
+import com.example.data.PreferencesManager
 import com.example.network.HttpConfig
 import com.example.ui.theme.*
 
@@ -51,6 +53,7 @@ fun HttpSettingsDialog(
     var tableUrl by remember { mutableStateOf(currentConfig.tableUrl) }
     var tableReferer by remember { mutableStateOf(currentConfig.tableReferer) }
     var customHeadersJson by remember { mutableStateOf(currentConfig.customHeadersJson) }
+    var ntfyTopic by remember { mutableStateOf(PreferencesManager.getNtfyTopic(context)) }
 
     val scrollState = rememberScrollState()
 
@@ -377,6 +380,49 @@ fun HttpSettingsDialog(
                             )
                         }
                     }
+
+                    // 7. Push Notifications (ntfy.sh)
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = GeoSurfaceVariant),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Notifications,
+                                    contentDescription = "Push Notifications",
+                                    tint = GeoPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "📲 Notificaciones Push Remotas (ntfy.sh)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = GeoOnBackground
+                                )
+                            }
+                            Text(
+                                text = "Recibe notificaciones en tu celular o PC cada vez que se ejecuten renovaciones o existan errores con el log completo.",
+                                fontSize = 11.sp,
+                                color = GeoOnSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = ntfyTopic,
+                                onValueChange = { ntfyTopic = it },
+                                label = { Text("Tema/Tópico ntfy.sh (ej: Gato_Negro_Reportes)") },
+                                placeholder = { Text("Gato_Negro_Reportes") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "URL de suscripción: https://ntfy.sh/${ntfyTopic.ifEmpty { "Gato_Negro_Reportes" }}",
+                                fontSize = 11.sp,
+                                color = GeoPrimary,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -413,7 +459,8 @@ fun HttpSettingsDialog(
                                 customHeadersJson = customHeadersJson.trim()
                             )
                             HttpConfigStorage.saveConfig(context, newConfig)
-                            Toast.makeText(context, "Configuración HTTP guardada correctamente", Toast.LENGTH_SHORT).show()
+                            PreferencesManager.setSyncNtfyTopic(context, ntfyTopic.trim())
+                            Toast.makeText(context, "Configuración HTTP y Notificaciones guardada", Toast.LENGTH_SHORT).show()
                             onDismissRequest()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = GeoPrimary)
