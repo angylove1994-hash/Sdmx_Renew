@@ -181,11 +181,14 @@ class SdmxApiService {
         val duration = if (adultos) config.packageDurationAdults else config.packageDurationNormal
 
         val formBuilder = FormBody.Builder()
+            .add("action", "line")
+            .add("trial", config.trialParam.ifEmpty { "1" })
             .add("username", username)
             .add("password", pass)
             .add("package", pkg)
             .add("package_cost", "0")
             .add("package_duration", duration)
+            .add("max_connections", config.maxConnections.ifEmpty { "2" })
             .add("exp_date", "$expDate 00:00")
             .add("contact", "")
             .add("reseller_notes", "")
