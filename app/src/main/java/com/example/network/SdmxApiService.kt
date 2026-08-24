@@ -181,19 +181,16 @@ class SdmxApiService {
         val duration = if (adultos) config.packageDurationAdults else config.packageDurationNormal
 
         val formBuilder = FormBody.Builder()
-            .add("action", "line")
-            .add("trial", config.trialParam.ifEmpty { "1" })
-            .add("bouquets_selected", "")
             .add("username", username)
             .add("password", pass)
             .add("package", pkg)
             .add("package_cost", "0")
             .add("package_duration", duration)
-            .add("max_connections", config.maxConnections.ifEmpty { "2" })
             .add("exp_date", "$expDate 00:00")
             .add("contact", "")
             .add("reseller_notes", "")
             .add("isp_clear", "")
+            .add("bouquets_selected", "")
 
         val defaultBouquets = config.bouquetsDefault.split(",").map { it.trim() }.filter { it.isNotEmpty() }
         for (bq in defaultBouquets) {
@@ -226,37 +223,25 @@ class SdmxApiService {
                     LogManager.addLog(ctx, "📥 [SDMX Resp HTTP ${response.code}] $disp")
                 }
 
-                var extractedError = ""
-                try {
-                    val obj = JSONObject(bodyStr)
-                    val result = obj.optBoolean("result", true)
-                    val status = obj.optString("status", "")
-                    val message = obj.optString("message", "")
-                    val error = obj.optString("error", "")
-                    val msg = obj.optString("msg", "")
-
-                    if (!result || status.equals("error", ignoreCase = true) || error.isNotEmpty()) {
-                        extractedError = when {
-                            message.isNotEmpty() -> message
-                            error.isNotEmpty() -> error
-                            msg.isNotEmpty() -> msg
-                            else -> "SDMX rechazó la creación (result=false)"
-                        }
-                    }
-                } catch (jsonEx: Exception) {
-                    if (bodyStr.contains("\"result\":false", ignoreCase = true) || 
-                        (bodyStr.contains("error", ignoreCase = true) && !bodyStr.contains("success", ignoreCase = true))) {
-                        extractedError = "Error en panel SDMX: " + bodyStr.take(120)
-                    }
-                }
-
-                if (extractedError.isNotEmpty()) {
-                    Log.e("SdmxApi", "Error creating line: $extractedError")
-                    return@withContext Result.failure(Exception(extractedError))
-                }
-                
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(Exception("Error HTTP ${response.code}"))
+                }
+
+                // If the panel explicitly returns JSON {"result": false, ...}
+                if (bodyStr.contains("\"result\":false", ignoreCase = true) || bodyStr.contains("\"result\": false", ignoreCase = true)) {
+                    var errorMsg = "SDMX rechazó la creación (result=false)"
+                    try {
+                        val obj = JSONObject(bodyStr)
+                        val msg = obj.optString("message", "").ifEmpty {
+                            obj.optString("error", "").ifEmpty {
+                                obj.optString("msg", "")
+                            }
+                        }
+                        if (msg.isNotEmpty() && msg != "null") {
+                            errorMsg = msg
+                        }
+                    } catch (_: Exception) {}
+                    return@withContext Result.failure(Exception(errorMsg))
                 }
 
                 return@withContext Result.success("OK")

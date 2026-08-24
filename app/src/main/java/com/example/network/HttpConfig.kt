@@ -4,7 +4,7 @@ import org.json.JSONObject
 
 data class HttpConfig(
     val ignoreSslErrors: Boolean = true,
-    val userAgent: String = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+    val userAgent: String = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     val loginUrl: String = "https://sdmx.vip/resellers/login",
     val loginReferer: String = "https://sdmx.vip/resellers/login?referrer=logout",
     val loginOrigin: String = "https://sdmx.vip",
@@ -54,9 +54,11 @@ data class HttpConfig(
             if (jsonStr.isNullOrEmpty()) return HttpConfig()
             return try {
                 val json = JSONObject(jsonStr)
+                val rawUa = json.optString("userAgent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+                val finalUa = if (rawUa.contains("Chrome/150") || rawUa.isBlank()) "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" else rawUa
                 HttpConfig(
                     ignoreSslErrors = json.optBoolean("ignoreSslErrors", true),
-                    userAgent = json.optString("userAgent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"),
+                    userAgent = finalUa,
                     loginUrl = json.optString("loginUrl", "https://sdmx.vip/resellers/login"),
                     loginReferer = json.optString("loginReferer", "https://sdmx.vip/resellers/login?referrer=logout"),
                     loginOrigin = json.optString("loginOrigin", "https://sdmx.vip"),
