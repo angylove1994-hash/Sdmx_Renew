@@ -16,6 +16,8 @@ data class HttpConfig(
     val packageDurationNormal: String = "2 hours",
     val bouquetsDefault: String = "19,24,21,8,23",
     val bouquetAdults: String = "96",
+    val trialParam: String = "1",
+    val maxConnections: String = "2",
     val deleteLineUrl: String = "https://sdmx.vip/resellers/api?action=line&sub=delete&user_id={id}",
     val deleteLineReferer: String = "https://sdmx.vip/resellers/lines?order=0&dir=desc",
     val tableUrl: String = "https://sdmx.vip/resellers/table",
@@ -37,6 +39,8 @@ data class HttpConfig(
         json.put("packageDurationNormal", packageDurationNormal)
         json.put("bouquetsDefault", bouquetsDefault)
         json.put("bouquetAdults", bouquetAdults)
+        json.put("trialParam", trialParam)
+        json.put("maxConnections", maxConnections)
         json.put("deleteLineUrl", deleteLineUrl)
         json.put("deleteLineReferer", deleteLineReferer)
         json.put("tableUrl", tableUrl)
@@ -64,6 +68,8 @@ data class HttpConfig(
                     packageDurationNormal = json.optString("packageDurationNormal", "2 hours"),
                     bouquetsDefault = json.optString("bouquetsDefault", "19,24,21,8,23"),
                     bouquetAdults = json.optString("bouquetAdults", "96"),
+                    trialParam = json.optString("trialParam", "1"),
+                    maxConnections = json.optString("maxConnections", "2"),
                     deleteLineUrl = json.optString("deleteLineUrl", "https://sdmx.vip/resellers/api?action=line&sub=delete&user_id={id}"),
                     deleteLineReferer = json.optString("deleteLineReferer", "https://sdmx.vip/resellers/lines?order=0&dir=desc"),
                     tableUrl = json.optString("tableUrl", "https://sdmx.vip/resellers/table"),

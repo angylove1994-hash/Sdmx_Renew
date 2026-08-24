@@ -24,9 +24,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -42,6 +42,8 @@ import java.util.*
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+
     val userSdmx by viewModel.userSdmx.collectAsState()
     val intervalHours by viewModel.intervalHours.collectAsState()
     val isAggressiveMode by viewModel.isAggressiveMode.collectAsState()
@@ -58,7 +60,6 @@ fun MainScreen(viewModel: MainViewModel) {
     var showHttpSettingsDialog by remember { mutableStateOf(false) }
     var isIgnoringBattery by remember { mutableStateOf(BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)) }
 
-    // Re-check battery status
     LaunchedEffect(Unit) {
         isIgnoringBattery = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
     }
@@ -86,7 +87,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     .padding(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // LEFT PANE: Controls, Configuration & Quick Actions
+                // LEFT PANE: Controls & System Actions
                 Surface(
                     color = GeoSurface,
                     shape = RoundedCornerShape(16.dp),
@@ -108,11 +109,14 @@ fun MainScreen(viewModel: MainViewModel) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val openAdminAction = { showAdminCredentialsDialog = true }
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
-                                    .clickable { showAdminCredentialsDialog = true }
-                                    .focusable()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(onClick = openAdminAction)
+                                    .dpadAndTabNav(focusManager, onEnter = openAdminAction)
+                                    .padding(4.dp)
                             ) {
                                 Box(
                                     modifier = Modifier
@@ -153,12 +157,13 @@ fun MainScreen(viewModel: MainViewModel) {
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                val openHttpAction = { showHttpSettingsDialog = true }
                                 Surface(
-                                    onClick = { showHttpSettingsDialog = true },
+                                    onClick = openHttpAction,
                                     shape = RoundedCornerShape(50),
                                     color = GeoPrimary,
                                     contentColor = GeoSurface,
-                                    modifier = Modifier.focusable()
+                                    modifier = Modifier.dpadAndTabNav(focusManager, onEnter = openHttpAction, borderShape = RoundedCornerShape(50))
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -201,16 +206,17 @@ fun MainScreen(viewModel: MainViewModel) {
 
                         // Battery Alert (Compact)
                         AnimatedVisibility(visible = !isIgnoringBattery) {
+                            val batteryAction = {
+                                BatteryOptimizationHelper.requestIgnoreBatteryOptimizations(context)
+                                isIgnoringBattery = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
+                            }
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = Color(0xFF3E1F1F)),
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable {
-                                        BatteryOptimizationHelper.requestIgnoreBatteryOptimizations(context)
-                                        isIgnoringBattery = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
-                                    }
-                                    .focusable()
+                                    .clickable(onClick = batteryAction)
+                                    .dpadAndTabNav(focusManager, onEnter = batteryAction, borderShape = RoundedCornerShape(8.dp))
                             ) {
                                 Row(
                                     modifier = Modifier.padding(8.dp),
@@ -246,8 +252,9 @@ fun MainScreen(viewModel: MainViewModel) {
                             Column(
                                 modifier = Modifier
                                     .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable { expanded = true }
-                                    .focusable()
+                                    .dpadAndTabNav(focusManager, onEnter = { expanded = true })
                                     .padding(horizontal = 8.dp, vertical = 6.dp)
                             ) {
                                 Text(
@@ -326,7 +333,9 @@ fun MainScreen(viewModel: MainViewModel) {
                             Switch(
                                 checked = isAggressiveMode,
                                 onCheckedChange = { viewModel.setAggressiveMode(it) },
-                                modifier = Modifier.size(width = 40.dp, height = 24.dp).focusable()
+                                modifier = Modifier
+                                    .size(width = 40.dp, height = 24.dp)
+                                    .dpadAndTabNav(focusManager, onEnter = { viewModel.setAggressiveMode(!isAggressiveMode) })
                             )
                         }
 
@@ -358,10 +367,13 @@ fun MainScreen(viewModel: MainViewModel) {
                                             color = GeoOnBackground
                                         )
                                     }
+                                    val testPushAction = { viewModel.sendTestNtfyPush() }
                                     TextButton(
-                                        onClick = { viewModel.sendTestNtfyPush() },
+                                        onClick = testPushAction,
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                        modifier = Modifier.height(26.dp).focusable()
+                                        modifier = Modifier
+                                            .height(26.dp)
+                                            .dpadAndTabNav(focusManager, onEnter = testPushAction)
                                     ) {
                                         Text("Probar Push", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = GeoPrimary)
                                     }
@@ -381,13 +393,19 @@ fun MainScreen(viewModel: MainViewModel) {
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
+                            val manualAction = { 
+                                viewModel.runManualCycle()
+                                Unit
+                            }
+                            val addAction = { showAddDialog = true }
+
                             Button(
-                                onClick = { viewModel.runManualCycle() },
+                                onClick = manualAction,
                                 enabled = !isLoading,
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(44.dp)
-                                    .focusable(),
+                                    .dpadAndTabNav(focusManager, onEnter = manualAction),
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = GeoPrimary,
@@ -406,11 +424,11 @@ fun MainScreen(viewModel: MainViewModel) {
                             }
 
                             Button(
-                                onClick = { showAddDialog = true },
+                                onClick = addAction,
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(44.dp)
-                                    .focusable(),
+                                    .dpadAndTabNav(focusManager, onEnter = addAction),
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = GeoSurfaceVariant,
@@ -435,11 +453,12 @@ fun MainScreen(viewModel: MainViewModel) {
                                 modifier = Modifier.weight(1.3f)
                             )
 
+                            val purgeAction = { showPurgeConfirmation = true }
                             OutlinedButton(
-                                onClick = { showPurgeConfirmation = true },
+                                onClick = purgeAction,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .focusable(),
+                                    .dpadAndTabNav(focusManager, onEnter = purgeAction),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE57373)),
                                 shape = RoundedCornerShape(12.dp),
                                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
@@ -525,10 +544,13 @@ fun MainScreen(viewModel: MainViewModel) {
                                         letterSpacing = 1.sp
                                     )
                                 }
+                                val addAction = { showAddDialog = true }
                                 TextButton(
-                                    onClick = { showAddDialog = true },
+                                    onClick = addAction,
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                    modifier = Modifier.height(28.dp).focusable()
+                                    modifier = Modifier
+                                        .height(28.dp)
+                                        .dpadAndTabNav(focusManager, onEnter = addAction)
                                 ) {
                                     Icon(Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(14.dp), tint = GeoPrimary)
                                     Spacer(modifier = Modifier.width(3.dp))
@@ -557,7 +579,11 @@ fun MainScreen(viewModel: MainViewModel) {
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     items(users) { user ->
-                                        UserItemCard(user = user, onEdit = { userToEdit = user })
+                                        UserItemCard(
+                                            user = user,
+                                            onEdit = { userToEdit = user },
+                                            focusManager = focusManager
+                                        )
                                     }
                                 }
                             }
@@ -570,6 +596,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         ntfyTopic = ntfyTopic,
                         onClearLogs = { viewModel.clearLogs() },
                         onTestNtfy = { viewModel.sendTestNtfyPush() },
+                        focusManager = focusManager,
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(0.58f)
@@ -600,9 +627,12 @@ fun MainScreen(viewModel: MainViewModel) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val openAdminAction = { showAdminCredentialsDialog = true }
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.clickable { showAdminCredentialsDialog = true }
+                                modifier = Modifier
+                                    .clickable(onClick = openAdminAction)
+                                    .dpadAndTabNav(focusManager, onEnter = openAdminAction)
                             ) {
                                 Box(
                                     modifier = Modifier
@@ -621,11 +651,13 @@ fun MainScreen(viewModel: MainViewModel) {
                             }
 
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val openHttpAction = { showHttpSettingsDialog = true }
                                 Surface(
-                                    onClick = { showHttpSettingsDialog = true },
+                                    onClick = openHttpAction,
                                     shape = RoundedCornerShape(50),
                                     color = GeoPrimary,
-                                    contentColor = GeoSurface
+                                    contentColor = GeoSurface,
+                                    modifier = Modifier.dpadAndTabNav(focusManager, onEnter = openHttpAction, borderShape = RoundedCornerShape(50))
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -653,6 +685,7 @@ fun MainScreen(viewModel: MainViewModel) {
                                 modifier = Modifier
                                     .weight(1f)
                                     .clickable { expanded = true }
+                                    .dpadAndTabNav(focusManager, onEnter = { expanded = true })
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text("INTERVALO", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = GeoOnSurfaceVariant)
@@ -702,7 +735,9 @@ fun MainScreen(viewModel: MainViewModel) {
                             Switch(
                                 checked = isAggressiveMode,
                                 onCheckedChange = { viewModel.setAggressiveMode(it) },
-                                modifier = Modifier.size(width = 40.dp, height = 24.dp)
+                                modifier = Modifier
+                                    .size(width = 40.dp, height = 24.dp)
+                                    .dpadAndTabNav(focusManager, onEnter = { viewModel.setAggressiveMode(!isAggressiveMode) })
                             )
                         }
                     }
@@ -720,10 +755,19 @@ fun MainScreen(viewModel: MainViewModel) {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        val manualAction = { 
+                            viewModel.runManualCycle()
+                            Unit
+                        }
+                        val addAction = { showAddDialog = true }
+
                         Button(
-                            onClick = { viewModel.runManualCycle() },
+                            onClick = manualAction,
                             enabled = !isLoading,
-                            modifier = Modifier.weight(1f).height(46.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .dpadAndTabNav(focusManager, onEnter = manualAction),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = GeoPrimary, contentColor = GeoSurface)
                         ) {
@@ -739,8 +783,11 @@ fun MainScreen(viewModel: MainViewModel) {
                         }
 
                         Button(
-                            onClick = { showAddDialog = true },
-                            modifier = Modifier.weight(1f).height(46.dp),
+                            onClick = addAction,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .dpadAndTabNav(focusManager, onEnter = addAction),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = GeoSurfaceVariant, contentColor = GeoOnBackground)
                         ) {
@@ -759,9 +806,12 @@ fun MainScreen(viewModel: MainViewModel) {
 
                         DatabaseBackupButtons(viewModel = viewModel, modifier = Modifier.weight(1.3f))
 
+                        val purgeAction = { showPurgeConfirmation = true }
                         OutlinedButton(
-                            onClick = { showPurgeConfirmation = true },
-                            modifier = Modifier.weight(1f),
+                            onClick = purgeAction,
+                            modifier = Modifier
+                                .weight(1f)
+                                .dpadAndTabNav(focusManager, onEnter = purgeAction),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE57373)),
                             shape = RoundedCornerShape(12.dp),
                             contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
@@ -803,7 +853,9 @@ fun MainScreen(viewModel: MainViewModel) {
                         color = GeoSurface,
                         shape = RoundedCornerShape(14.dp),
                         border = androidx.compose.foundation.BorderStroke(1.dp, GeoOutline),
-                        modifier = Modifier.weight(1f).fillMaxWidth()
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.fillMaxSize().padding(10.dp)) {
                             Text(
@@ -823,7 +875,11 @@ fun MainScreen(viewModel: MainViewModel) {
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     items(users) { user ->
-                                        UserItemCard(user = user, onEdit = { userToEdit = user })
+                                        UserItemCard(
+                                            user = user,
+                                            onEdit = { userToEdit = user },
+                                            focusManager = focusManager
+                                        )
                                     }
                                 }
                             }
@@ -836,7 +892,10 @@ fun MainScreen(viewModel: MainViewModel) {
                         ntfyTopic = ntfyTopic,
                         onClearLogs = { viewModel.clearLogs() },
                         onTestNtfy = { viewModel.sendTestNtfyPush() },
-                        modifier = Modifier.fillMaxWidth().height(180.dp)
+                        focusManager = focusManager,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp)
                     )
                 }
             }
@@ -895,7 +954,8 @@ fun MainScreen(viewModel: MainViewModel) {
 @Composable
 private fun UserItemCard(
     user: UserModel,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    focusManager: androidx.compose.ui.focus.FocusManager
 ) {
     Box(
         modifier = Modifier
@@ -904,7 +964,7 @@ private fun UserItemCard(
             .background(GeoSurfaceVariant)
             .border(1.dp, GeoOutline, RoundedCornerShape(12.dp))
             .clickable { onEdit() }
-            .focusable()
+            .dpadAndTabNav(focusManager, onEnter = onEdit, borderShape = RoundedCornerShape(12.dp))
             .padding(10.dp)
     ) {
         Column {
@@ -940,7 +1000,9 @@ private fun UserItemCard(
 
                 IconButton(
                     onClick = onEdit,
-                    modifier = Modifier.size(24.dp).focusable()
+                    modifier = Modifier
+                        .size(24.dp)
+                        .dpadAndTabNav(focusManager, onEnter = onEdit)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Edit,
@@ -981,6 +1043,7 @@ private fun LiveLogConsole(
     ntfyTopic: String,
     onClearLogs: () -> Unit,
     onTestNtfy: () -> Unit,
+    focusManager: androidx.compose.ui.focus.FocusManager,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -1024,19 +1087,23 @@ private fun LiveLogConsole(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val copyAction = {
+                        try {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clip = ClipData.newPlainText("SDMX Logs", logs.reversed().joinToString("\n"))
+                            clipboard.setPrimaryClip(clip)
+                            Toast.makeText(context, "Logs copiados al portapapeles", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Error al copiar: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+
                     // Copy to clipboard
                     IconButton(
-                        onClick = {
-                            try {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("SDMX Logs", logs.reversed().joinToString("\n"))
-                                clipboard.setPrimaryClip(clip)
-                                Toast.makeText(context, "Logs copiados al portapapeles", Toast.LENGTH_SHORT).show()
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Error al copiar: ${e.message}", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        modifier = Modifier.size(26.dp).focusable()
+                        onClick = copyAction,
+                        modifier = Modifier
+                            .size(26.dp)
+                            .dpadAndTabNav(focusManager, onEnter = copyAction)
                     ) {
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
@@ -1049,7 +1116,9 @@ private fun LiveLogConsole(
                     // Test push notification
                     IconButton(
                         onClick = onTestNtfy,
-                        modifier = Modifier.size(26.dp).focusable()
+                        modifier = Modifier
+                            .size(26.dp)
+                            .dpadAndTabNav(focusManager, onEnter = onTestNtfy)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Send,
@@ -1062,7 +1131,9 @@ private fun LiveLogConsole(
                     // Clear logs
                     IconButton(
                         onClick = onClearLogs,
-                        modifier = Modifier.size(26.dp).focusable()
+                        modifier = Modifier
+                            .size(26.dp)
+                            .dpadAndTabNav(focusManager, onEnter = onClearLogs)
                     ) {
                         Icon(
                             imageVector = Icons.Default.DeleteOutline,

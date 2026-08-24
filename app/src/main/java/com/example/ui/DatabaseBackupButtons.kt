@@ -13,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -29,6 +30,7 @@ fun DatabaseBackupButtons(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val gson = Gson()
 
     // Export launcher
@@ -76,13 +78,18 @@ fun DatabaseBackupButtons(
         }
     }
 
+    val exportAction = { exportLauncher.launch("sdmx_users_backup.json") }
+    val importAction = { importLauncher.launch("application/json") }
+
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         OutlinedButton(
-            onClick = { exportLauncher.launch("sdmx_users_backup.json") },
-            modifier = Modifier.weight(1f),
+            onClick = exportAction,
+            modifier = Modifier
+                .weight(1f)
+                .dpadAndTabNav(focusManager, onEnter = exportAction),
             shape = RoundedCornerShape(12.dp),
             contentPadding = PaddingValues(horizontal = 4.dp, vertical = 10.dp)
         ) {
@@ -102,8 +109,10 @@ fun DatabaseBackupButtons(
         }
 
         OutlinedButton(
-            onClick = { importLauncher.launch("application/json") },
-            modifier = Modifier.weight(1f),
+            onClick = importAction,
+            modifier = Modifier
+                .weight(1f)
+                .dpadAndTabNav(focusManager, onEnter = importAction),
             shape = RoundedCornerShape(12.dp),
             contentPadding = PaddingValues(horizontal = 4.dp, vertical = 10.dp)
         ) {

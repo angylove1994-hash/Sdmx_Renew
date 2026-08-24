@@ -2,6 +2,8 @@ package com.example.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -9,8 +11,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -29,9 +34,19 @@ fun AddUserDialog(
     var meses by remember { mutableIntStateOf(1) }
     var adultos by remember { mutableStateOf(false) }
 
+    val focusManager = LocalFocusManager.current
+
+    val submitAction = {
+        if (username.isNotBlank() && password.isNotBlank()) {
+            onAddUser(username.trim(), password.trim(), meses, adultos)
+        }
+    }
+
     Dialog(onDismissRequest = onDismissRequest) {
         Card(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = GeoSurface)
         ) {
@@ -45,13 +60,18 @@ fun AddUserDialog(
                     fontWeight = FontWeight.Bold,
                     color = GeoOnBackground
                 )
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
                     label = { Text("Usuario (IPTV)") },
-                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .textFieldKeyNavigation(focusManager),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = GeoSurface,
                         unfocusedContainerColor = GeoSurface,
@@ -66,9 +86,15 @@ fun AddUserDialog(
                     value = password,
                     onValueChange = { password = it },
                     label = { Text("Contraseña") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.moveFocus(FocusDirection.Down) }),
                     visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
-                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        IconButton(
+                            onClick = { passwordVisible = !passwordVisible },
+                            modifier = Modifier.dpadAndTabNav(focusManager)
+                        ) {
                             Icon(
                                 imageVector = if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
                                 contentDescription = if (passwordVisible) "Ocultar contraseña" else "Mostrar contraseña",
@@ -76,8 +102,9 @@ fun AddUserDialog(
                             )
                         }
                     },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .textFieldKeyNavigation(focusManager),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = GeoSurface,
                         unfocusedContainerColor = GeoSurface,
@@ -86,7 +113,7 @@ fun AddUserDialog(
                     ),
                     shape = RoundedCornerShape(12.dp)
                 )
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 Text("Vigencia (Meses)", color = GeoOnSurfaceVariant, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                 Spacer(modifier = Modifier.height(8.dp))
@@ -99,6 +126,7 @@ fun AddUserDialog(
                             selected = meses == m,
                             onClick = { meses = m },
                             label = { Text("$m") },
+                            modifier = Modifier.dpadAndTabNav(focusManager, onEnter = { meses = m }),
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = GeoPrimaryContainer,
                                 selectedLabelColor = GeoOnPrimaryContainer
@@ -106,23 +134,24 @@ fun AddUserDialog(
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("¿Incluir canal adultos?", fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
+                    Text("¿Incluir canal adultos?", fontWeight = FontWeight.Medium, color = GeoOnBackground)
                     Switch(
                         checked = adultos, 
                         onCheckedChange = { adultos = it },
+                        modifier = Modifier.dpadAndTabNav(focusManager, onEnter = { adultos = !adultos }),
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor = androidx.compose.ui.graphics.Color.White,
-                            checkedTrackColor = com.example.ui.theme.GeoPrimary,
-                            uncheckedThumbColor = androidx.compose.ui.graphics.Color.DarkGray,
-                            uncheckedTrackColor = androidx.compose.ui.graphics.Color.LightGray,
-                            uncheckedBorderColor = androidx.compose.ui.graphics.Color.Gray
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = GeoPrimary,
+                            uncheckedThumbColor = Color.DarkGray,
+                            uncheckedTrackColor = Color.LightGray,
+                            uncheckedBorderColor = Color.Gray
                         )
                     )
                 }
@@ -132,23 +161,23 @@ fun AddUserDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
-                    TextButton(onClick = onDismissRequest) {
+                    TextButton(
+                        onClick = onDismissRequest,
+                        modifier = Modifier.dpadAndTabNav(focusManager, onEnter = onDismissRequest)
+                    ) {
                         Text("Cancelar", color = GeoOnSurfaceVariant)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
-                        onClick = {
-                            if (username.isNotBlank() && password.isNotBlank()) {
-                                onAddUser(username.trim(), password.trim(), meses, adultos)
-                            }
-                        },
+                        onClick = submitAction,
+                        modifier = Modifier.dpadAndTabNav(focusManager, onEnter = submitAction),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = GeoPrimary,
                             contentColor = GeoSurface
                         ),
                         shape = RoundedCornerShape(24.dp)
                     ) {
-                        Text("Crear", fontWeight = FontWeight.Bold)
+                        Text("Guardar Usuario", fontWeight = FontWeight.Bold)
                     }
                 }
             }

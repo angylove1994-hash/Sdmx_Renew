@@ -37,10 +37,6 @@ class SdmxApiService {
             Log.d("SdmxApiCookieJar", "loadForRequest: $url -> ${cookies.joinToString { "${it.name}=${it.value}" }}")
             return cookies
         }
-        
-        fun getCookieString(): String {
-            return cookieStore["sdmx.vip"]?.joinToString("; ") { "${it.name}=${it.value}" } ?: ""
-        }
     }
 
     private fun getOkHttpClient(ignoreSsl: Boolean = true): OkHttpClient {
@@ -186,14 +182,14 @@ class SdmxApiService {
 
         val formBuilder = FormBody.Builder()
             .add("action", "line")
-            .add("trial", "1")
+            .add("trial", config.trialParam.ifEmpty { "1" })
             .add("bouquets_selected", "")
             .add("username", username)
             .add("password", pass)
             .add("package", pkg)
             .add("package_cost", "0")
             .add("package_duration", duration)
-            .add("max_connections", "2")
+            .add("max_connections", config.maxConnections.ifEmpty { "2" })
             .add("exp_date", "$expDate 00:00")
             .add("contact", "")
             .add("reseller_notes", "")
@@ -211,32 +207,58 @@ class SdmxApiService {
         val requestBuilder = Request.Builder()
             .url(config.createLineUrl)
             .post(formBuilder.build())
-            .addHeader("Accept", "*/*")
+            .addHeader("Accept", "application/json, text/javascript, */*; q=0.01")
             .addHeader("Origin", config.loginOrigin)
             .addHeader("Referer", config.createLineReferer)
             .addHeader("User-Agent", config.userAgent)
             .addHeader("X-Requested-With", "XMLHttpRequest")
-            .addHeader("Cookie", cookieJar.getCookieString())
 
         applyCustomHeaders(requestBuilder, config.customHeadersJson)
             
         try {
             client.newCall(requestBuilder.build()).execute().use { response ->
                 val bodyStr = response.body?.string() ?: ""
-                Log.d("SdmxApi", "Create response: $bodyStr")
-                if (bodyStr.contains("\"result\":false") || (bodyStr.contains("error", ignoreCase = true) && !bodyStr.contains("success"))) {
-                    Log.e("SdmxApi", "Error from server: $bodyStr")
-                    try {
-                        val obj = JSONObject(bodyStr)
-                        val msg = obj.optString("message", "")
-                        if (msg.isNotEmpty()) return@withContext Result.failure(Exception(msg))
-                    } catch (e: Exception) {}
-                    return@withContext Result.failure(Exception("Error de servidor. Revisa el log."))
+                Log.d("SdmxApi", "Create response code=${response.code}, body: $bodyStr")
+                
+                context?.let { ctx ->
+                    val cleanSnippet = bodyStr.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
+                    val disp = if (cleanSnippet.length > 200) cleanSnippet.substring(0, 200) + "..." else cleanSnippet
+                    LogManager.addLog(ctx, "📥 [SDMX Resp HTTP ${response.code}] $disp")
+                }
+
+                var extractedError = ""
+                try {
+                    val obj = JSONObject(bodyStr)
+                    val result = obj.optBoolean("result", true)
+                    val status = obj.optString("status", "")
+                    val message = obj.optString("message", "")
+                    val error = obj.optString("error", "")
+                    val msg = obj.optString("msg", "")
+
+                    if (!result || status.equals("error", ignoreCase = true) || error.isNotEmpty()) {
+                        extractedError = when {
+                            message.isNotEmpty() -> message
+                            error.isNotEmpty() -> error
+                            msg.isNotEmpty() -> msg
+                            else -> "SDMX rechazó la creación (result=false)"
+                        }
+                    }
+                } catch (jsonEx: Exception) {
+                    if (bodyStr.contains("\"result\":false", ignoreCase = true) || 
+                        (bodyStr.contains("error", ignoreCase = true) && !bodyStr.contains("success", ignoreCase = true))) {
+                        extractedError = "Error en panel SDMX: " + bodyStr.take(120)
+                    }
+                }
+
+                if (extractedError.isNotEmpty()) {
+                    Log.e("SdmxApi", "Error creating line: $extractedError")
+                    return@withContext Result.failure(Exception(extractedError))
                 }
                 
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(Exception("Error HTTP ${response.code}"))
                 }
+
                 return@withContext Result.success("OK")
             }
         } catch (e: Exception) {
@@ -257,7 +279,6 @@ class SdmxApiService {
             .addHeader("Referer", config.deleteLineReferer)
             .addHeader("User-Agent", config.userAgent)
             .addHeader("X-Requested-With", "XMLHttpRequest")
-            .addHeader("Cookie", cookieJar.getCookieString())
 
         applyCustomHeaders(requestBuilder, config.customHeadersJson)
             
@@ -307,105 +328,104 @@ class SdmxApiService {
             .addHeader("Referer", config.tableReferer)
             .addHeader("User-Agent", config.userAgent)
             .addHeader("X-Requested-With", "XMLHttpRequest")
-            .addHeader("Cookie", cookieJar.getCookieString())
 
         applyCustomHeaders(requestBuilder, config.customHeadersJson)
-            
-        val list = mutableListOf<Pair<String, String>>()
+
         try {
             client.newCall(requestBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext list
-                val jsonStr = response.body?.string() ?: return@withContext list
+                if (!response.isSuccessful) {
+                    context?.let { LogManager.addLog(it, "❌ Error al consultar tabla SDMX: HTTP ${response.code}") }
+                    return@withContext emptyList()
+                }
                 
-                Log.d("SdmxApi", "Table JSON length: ${jsonStr.length}")
+                val bodyStr = response.body?.string() ?: ""
+                val results = mutableListOf<Pair<String, String>>()
                 
-                val jsonResponse = JSONObject(jsonStr)
-                val dataArray = jsonResponse.optJSONArray("data") ?: return@withContext list
+                val json = JSONObject(bodyStr)
+                val data = json.optJSONArray("data") ?: return@withContext emptyList()
                 
-                val cleanRegex = Regex("<.*?>")
-                for (i in 0 until dataArray.length()) {
-                    val row = dataArray.optJSONArray(i) ?: continue
+                for (i in 0 until data.length()) {
+                    val row = data.getJSONArray(i)
                     if (row.length() >= 2) {
-                        val rawId = row.optString(0)
-                        val rawUsername = row.optString(1)
+                        val col0 = row.getString(0)
+                        val col1 = row.getString(1)
                         
-                        var cleanId = rawId.replace(cleanRegex, "").trim()
-                        val cleanUsername = rawUsername.replace(cleanRegex, "").trim()
+                        val idMatch = Regex("id=[\"'](\\d+)[\"']|user_id=[\"'](\\d+)[\"']|data-id=[\"'](\\d+)[\"']|value=[\"'](\\d+)[\"']").find(col0)
+                        val id = idMatch?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() } ?: col0.replace(Regex("<[^>]*>"), "").trim()
                         
-                        if (cleanId.isEmpty() && rawId.contains("value=")) {
-                            val match = Regex("value=[\"']?(\\d+)[\"']?").find(rawId)
-                            if (match != null) cleanId = match.groupValues[1]
-                        }
+                        val userClean = col1.replace(Regex("<[^>]*>"), "").trim()
                         
-                        if (cleanId.isNotEmpty() && cleanUsername.isNotEmpty()) {
-                            list.add(Pair(cleanUsername, cleanId))
+                        if (id.isNotEmpty() && userClean.isNotEmpty()) {
+                            results.add(Pair(id, userClean))
                         }
                     }
                 }
+                
+                return@withContext results
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            context?.let { LogManager.addLog(it, "❌ Error leyendo tabla SDMX: ${e.message}") }
+            return@withContext emptyList()
         }
-        return@withContext list
     }
 
-    suspend fun getTableIds(context: Context? = null): Map<String, String> = getTableRows(context).toMap()
-
-    suspend fun verifyHealthCheck(context: Context?, sdUser: String, sdPass: String): Boolean = withContext(Dispatchers.IO) {
-        context?.let { LogManager.addLog(it, "🔍 [Paso 1/3] Verificación previa: Login en panel SDMX...") }
-        val loginOk = login(context, sdUser, sdPass)
-        if (!loginOk) {
-            context?.let { LogManager.addLog(it, "❌ ERROR EN VERIFICACIÓN PREVIA (Paso 1): No se pudo iniciar sesión. Se cancela el ciclo.") }
-            return@withContext false
+    suspend fun getTableIds(context: Context? = null): Map<String, String> {
+        val rows = getTableRows(context)
+        val map = mutableMapOf<String, String>()
+        for (row in rows) {
+            map[row.second] = row.first
         }
+        return map
+    }
 
-        // Clean up any old Test00777 line if present
-        try {
-            val initialIds = getTableIds(context)
-            val existingTestId = initialIds["Test00777"]
-            if (existingTestId != null) {
-                context?.let { LogManager.addLog(it, "🧹 Limpiando usuario de prueba previo 'Test00777' (ID: $existingTestId)...") }
-                deleteLine(context, existingTestId)
-                kotlinx.coroutines.delay(1000)
-            }
-        } catch (e: Exception) {
-            // Ignore cleanup error
-        }
-
-        // Paso 2: Crear usuario de prueba
-        context?.let { LogManager.addLog(it, "🧪 [Paso 2/3] Verificación previa: Creando usuario de prueba 'Test00777'...") }
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    suspend fun renewLine(
+        context: Context? = null,
+        username: String,
+        pass: String,
+        adultos: Boolean,
+        meses: Int = 1
+    ): Boolean = withContext(Dispatchers.IO) {
         val cal = Calendar.getInstance()
-        cal.add(Calendar.MONTH, 1)
-        val testExpDate = sdf.format(cal.time)
+        cal.add(Calendar.MONTH, meses)
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val expDate = sdf.format(cal.time)
 
-        val createRes = createLine(context, "Test00777", "Test00777", testExpDate, adultos = false)
-        if (createRes.isFailure) {
-            val err = createRes.exceptionOrNull()?.message ?: "Error desconocido"
-            context?.let { LogManager.addLog(it, "❌ ERROR EN VERIFICACIÓN PREVIA (Paso 2): No se pudo crear usuario 'Test00777'. Detalle: $err. Se cancela el ciclo.") }
+        context?.let { LogManager.addLog(it, "⏳ [1/2] Eliminando versión anterior de '$username' en SDMX...") }
+        val table = getTableRows(context)
+        val match = table.find { it.second.equals(username, ignoreCase = true) }
+        
+        if (match != null) {
+            val id = match.first
+            context?.let { LogManager.addLog(it, "🗑️ Encontrado en panel ID #$id para '$username'. Borrando...") }
+            deleteLine(context, id)
+            kotlinx.coroutines.delay(1000)
+        } else {
+            context?.let { LogManager.addLog(it, "ℹ️ Línea '$username' no localizada en tabla (o ya expiró). Procediendo a creación.") }
+        }
+
+        context?.let { LogManager.addLog(it, "✨ [2/2] Creando línea '$username' en SDMX...") }
+        val createResult = createLine(context, username, pass, expDate, adultos)
+        if (createResult.isSuccess) {
+            context?.let { LogManager.addLog(it, "✅ Línea '$username' renovada/creada exitosamente en SDMX.") }
+            return@withContext true
+        } else {
+            val errMsg = createResult.exceptionOrNull()?.message ?: "Desconocido"
+            context?.let { LogManager.addLog(it, "❌ Falló creación de '$username': $errMsg") }
             return@withContext false
         }
+    }
 
-        context?.let { LogManager.addLog(it, "✅ [Paso 2/3] Usuario de prueba 'Test00777' creado en el panel.") }
-
-        // Paso 3: Obtener ID y borrarlo inmediatamente
-        context?.let { LogManager.addLog(it, "🔎 [Paso 3/3] Verificación previa: Obteniendo ID y eliminando usuario 'Test00777'...") }
-        kotlinx.coroutines.delay(1500)
-        val newIds = getTableIds(context)
-        val testId = newIds["Test00777"]
-
-        if (testId != null) {
-            val delOk = deleteLine(context, testId)
-            if (delOk) {
-                context?.let { LogManager.addLog(it, "✅ [Paso 3/3] Usuario 'Test00777' (ID: $testId) eliminado correctamente.") }
-            } else {
-                context?.let { LogManager.addLog(it, "⚠️ Advertencia en Paso 3: Borrado de 'Test00777' retornó falso. ID era $testId.") }
-            }
-        } else {
-            context?.let { LogManager.addLog(it, "⚠️ Advertencia en Paso 3: No se encontró ID para 'Test00777' en la tabla.") }
+    suspend fun verifyHealthCheck(context: Context, user: String, pass: String): Boolean = withContext(Dispatchers.IO) {
+        LogManager.addLog(context, "🔍 Verificando estado del panel SDMX...")
+        val loginOk = login(context, user, pass)
+        if (!loginOk) {
+            LogManager.addLog(context, "❌ Prueba previa: Falló la autenticación con SDMX.")
+            return@withContext false
         }
-
-        context?.let { LogManager.addLog(it, "🎉 VERIFICACIÓN PREVIA COMPLETADA CON ÉXITO. Sistema SDMX listo para renovaciones.") }
+        
+        val rows = getTableRows(context)
+        LogManager.addLog(context, "✅ Prueba previa exitosa. Panel accesible, ${rows.size} líneas detectadas en SDMX.")
         return@withContext true
     }
 }

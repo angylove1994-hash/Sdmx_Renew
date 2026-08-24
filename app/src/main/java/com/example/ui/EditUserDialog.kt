@@ -2,6 +2,8 @@ package com.example.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -9,8 +11,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -35,6 +40,7 @@ fun EditUserDialog(
     var adultos by remember { mutableStateOf(user.adultos) }
     
     var showConfirmDelete by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
 
     if (showConfirmDelete) {
         AlertDialog(
@@ -63,7 +69,9 @@ fun EditUserDialog(
 
     Dialog(onDismissRequest = onDismissRequest) {
         Card(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = GeoSurface)
         ) {
@@ -77,13 +85,18 @@ fun EditUserDialog(
                     fontWeight = FontWeight.Bold,
                     color = GeoOnBackground
                 )
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
                     label = { Text("Usuario (IPTV)") },
-                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .textFieldKeyNavigation(focusManager),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = GeoSurface,
                         unfocusedContainerColor = GeoSurface,
@@ -98,9 +111,15 @@ fun EditUserDialog(
                     value = password,
                     onValueChange = { password = it },
                     label = { Text("Contraseña") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
                     visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
-                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        IconButton(
+                            onClick = { passwordVisible = !passwordVisible },
+                            modifier = Modifier.dpadAndTabNav(focusManager)
+                        ) {
                             Icon(
                                 imageVector = if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
                                 contentDescription = if (passwordVisible) "Ocultar contraseña" else "Mostrar contraseña",
@@ -108,8 +127,9 @@ fun EditUserDialog(
                             )
                         }
                     },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .textFieldKeyNavigation(focusManager),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = GeoSurface,
                         unfocusedContainerColor = GeoSurface,
@@ -123,8 +143,13 @@ fun EditUserDialog(
                 OutlinedTextField(
                     value = expirationDate,
                     onValueChange = { expirationDate = it },
-                    label = { Text("Vencimiento (YYYY-MM-DD)") },
-                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Fecha Vencimiento (YYYY-MM-DD)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.moveFocus(FocusDirection.Down) }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .textFieldKeyNavigation(focusManager),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = GeoSurface,
                         unfocusedContainerColor = GeoSurface,
@@ -133,30 +158,6 @@ fun EditUserDialog(
                     ),
                     shape = RoundedCornerShape(12.dp)
                 )
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text("Establecer vigencia desde hoy:", color = GeoOnSurfaceVariant, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    listOf(1, 2, 3, 6, 12).forEach { m ->
-                        FilterChip(
-                            selected = false,
-                            onClick = {
-                                val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-                                val cal = Calendar.getInstance()
-                                cal.add(Calendar.MONTH, m)
-                                expirationDate = sdf.format(cal.time)
-                            },
-                            label = { Text("+$m M") },
-                            colors = FilterChipDefaults.filterChipColors(
-                                labelColor = GeoPrimary
-                            )
-                        )
-                    }
-                }
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Row(
@@ -168,6 +169,7 @@ fun EditUserDialog(
                     Switch(
                         checked = adultos, 
                         onCheckedChange = { adultos = it },
+                        modifier = Modifier.dpadAndTabNav(focusManager, onEnter = { adultos = !adultos }),
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color.White,
                             checkedTrackColor = GeoPrimary,
@@ -179,7 +181,6 @@ fun EditUserDialog(
                 }
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Action buttons: Delete, Cancel, Save
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -187,22 +188,23 @@ fun EditUserDialog(
                 ) {
                     TextButton(
                         onClick = { showConfirmDelete = true },
-                        colors = ButtonDefaults.textButtonColors(contentColor = Color.Red)
+                        modifier = Modifier.dpadAndTabNav(focusManager, onEnter = { showConfirmDelete = true }),
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) {
-                        Text("Borrar", fontWeight = FontWeight.Bold)
+                        Text("Eliminar")
                     }
-                    
-                    Row(
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(onClick = onDismissRequest) {
+
+                    Row {
+                        TextButton(
+                            onClick = onDismissRequest,
+                            modifier = Modifier.dpadAndTabNav(focusManager, onEnter = onDismissRequest)
+                        ) {
                             Text("Cancelar", color = GeoOnSurfaceVariant)
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         Button(
                             onClick = {
-                                if (username.isNotBlank() && password.isNotBlank() && expirationDate.isNotBlank()) {
+                                if (username.isNotBlank() && password.isNotBlank()) {
                                     val updated = user.copy(
                                         usuario = username.trim(),
                                         password = password.trim(),
@@ -213,6 +215,7 @@ fun EditUserDialog(
                                     onDismissRequest()
                                 }
                             },
+                            modifier = Modifier.dpadAndTabNav(focusManager),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = GeoPrimary,
                                 contentColor = GeoSurface

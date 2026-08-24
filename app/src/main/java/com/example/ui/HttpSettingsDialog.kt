@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Http
@@ -15,9 +17,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -33,6 +38,7 @@ fun HttpSettingsDialog(
     onDismissRequest: () -> Unit
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val currentConfig = remember { HttpConfigStorage.getConfig(context) }
 
     var ignoreSslErrors by remember { mutableStateOf(currentConfig.ignoreSslErrors) }
@@ -48,6 +54,8 @@ fun HttpSettingsDialog(
     var packageDurationNormal by remember { mutableStateOf(currentConfig.packageDurationNormal) }
     var bouquetsDefault by remember { mutableStateOf(currentConfig.bouquetsDefault) }
     var bouquetAdults by remember { mutableStateOf(currentConfig.bouquetAdults) }
+    var trialParam by remember { mutableStateOf(currentConfig.trialParam) }
+    var maxConnections by remember { mutableStateOf(currentConfig.maxConnections) }
     var deleteLineUrl by remember { mutableStateOf(currentConfig.deleteLineUrl) }
     var deleteLineReferer by remember { mutableStateOf(currentConfig.deleteLineReferer) }
     var tableUrl by remember { mutableStateOf(currentConfig.tableUrl) }
@@ -57,6 +65,35 @@ fun HttpSettingsDialog(
 
     val scrollState = rememberScrollState()
 
+    val saveConfigAction = {
+        val newConfig = HttpConfig(
+            ignoreSslErrors = ignoreSslErrors,
+            userAgent = userAgent.trim(),
+            loginUrl = loginUrl.trim(),
+            loginReferer = loginReferer.trim(),
+            loginOrigin = loginOrigin.trim(),
+            createLineUrl = createLineUrl.trim(),
+            createLineReferer = createLineReferer.trim(),
+            packageAdults = packageAdults.trim(),
+            packageNormal = packageNormal.trim(),
+            packageDurationAdults = packageDurationAdults.trim(),
+            packageDurationNormal = packageDurationNormal.trim(),
+            bouquetsDefault = bouquetsDefault.trim(),
+            bouquetAdults = bouquetAdults.trim(),
+            trialParam = trialParam.trim(),
+            maxConnections = maxConnections.trim(),
+            deleteLineUrl = deleteLineUrl.trim(),
+            deleteLineReferer = deleteLineReferer.trim(),
+            tableUrl = tableUrl.trim(),
+            tableReferer = tableReferer.trim(),
+            customHeadersJson = customHeadersJson.trim()
+        )
+        HttpConfigStorage.saveConfig(context, newConfig)
+        PreferencesManager.setSyncNtfyTopic(context, ntfyTopic.trim())
+        Toast.makeText(context, "Configuración HTTP y Notificaciones guardada", Toast.LENGTH_SHORT).show()
+        onDismissRequest()
+    }
+
     Dialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -64,7 +101,7 @@ fun HttpSettingsDialog(
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.95f)
-                .fillMaxHeight(0.9f),
+                .fillMaxHeight(0.92f),
             shape = RoundedCornerShape(16.dp),
             color = GeoSurface,
             tonalElevation = 6.dp
@@ -110,13 +147,16 @@ fun HttpSettingsDialog(
                             packageDurationNormal = def.packageDurationNormal
                             bouquetsDefault = def.bouquetsDefault
                             bouquetAdults = def.bouquetAdults
+                            trialParam = def.trialParam
+                            maxConnections = def.maxConnections
                             deleteLineUrl = def.deleteLineUrl
                             deleteLineReferer = def.deleteLineReferer
                             tableUrl = def.tableUrl
                             tableReferer = def.tableReferer
                             customHeadersJson = def.customHeadersJson
                             Toast.makeText(context, "Valores restablecidos por defecto", Toast.LENGTH_SHORT).show()
-                        }
+                        },
+                        modifier = Modifier.dpadAndTabNav(focusManager)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
@@ -139,7 +179,7 @@ fun HttpSettingsDialog(
                     modifier = Modifier
                         .weight(1f)
                         .verticalScroll(scrollState),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     // 1. SSL & Security Section
                     Card(
@@ -183,7 +223,8 @@ fun HttpSettingsDialog(
                                 }
                                 Switch(
                                     checked = ignoreSslErrors,
-                                    onCheckedChange = { ignoreSslErrors = it }
+                                    onCheckedChange = { ignoreSslErrors = it },
+                                    modifier = Modifier.dpadAndTabNav(focusManager, onEnter = { ignoreSslErrors = !ignoreSslErrors })
                                 )
                             }
                             Spacer(modifier = Modifier.height(8.dp))
@@ -191,9 +232,12 @@ fun HttpSettingsDialog(
                                 value = userAgent,
                                 onValueChange = { userAgent = it },
                                 label = { Text("User-Agent Header") },
-                                singleLine = false,
-                                maxLines = 2,
-                                modifier = Modifier.fillMaxWidth()
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                         }
                     }
@@ -214,19 +258,34 @@ fun HttpSettingsDialog(
                                 value = loginUrl,
                                 onValueChange = { loginUrl = it },
                                 label = { Text("URL Login") },
-                                modifier = Modifier.fillMaxWidth()
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                             OutlinedTextField(
                                 value = loginReferer,
                                 onValueChange = { loginReferer = it },
                                 label = { Text("Header Referer Login") },
-                                modifier = Modifier.fillMaxWidth()
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                             OutlinedTextField(
                                 value = loginOrigin,
                                 onValueChange = { loginOrigin = it },
                                 label = { Text("Header Origin Login") },
-                                modifier = Modifier.fillMaxWidth()
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                         }
                     }
@@ -247,13 +306,23 @@ fun HttpSettingsDialog(
                                 value = createLineUrl,
                                 onValueChange = { createLineUrl = it },
                                 label = { Text("URL Crear Línea") },
-                                modifier = Modifier.fillMaxWidth()
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                             OutlinedTextField(
                                 value = createLineReferer,
                                 onValueChange = { createLineReferer = it },
                                 label = { Text("Header Referer Crear Línea") },
-                                modifier = Modifier.fillMaxWidth()
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -263,13 +332,23 @@ fun HttpSettingsDialog(
                                     value = packageNormal,
                                     onValueChange = { packageNormal = it },
                                     label = { Text("ID Paquete Normal") },
-                                    modifier = Modifier.weight(1f)
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .textFieldKeyNavigation(focusManager)
                                 )
                                 OutlinedTextField(
                                     value = packageAdults,
                                     onValueChange = { packageAdults = it },
                                     label = { Text("ID Paquete Adultos") },
-                                    modifier = Modifier.weight(1f)
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .textFieldKeyNavigation(focusManager)
                                 )
                             }
                             Row(
@@ -279,27 +358,74 @@ fun HttpSettingsDialog(
                                 OutlinedTextField(
                                     value = packageDurationNormal,
                                     onValueChange = { packageDurationNormal = it },
-                                    label = { Text("Duración Normal") },
-                                    modifier = Modifier.weight(1f)
+                                    label = { Text("Duración Normal (ej: 2 hours)") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .textFieldKeyNavigation(focusManager)
                                 )
                                 OutlinedTextField(
                                     value = packageDurationAdults,
                                     onValueChange = { packageDurationAdults = it },
-                                    label = { Text("Duración Adultos") },
-                                    modifier = Modifier.weight(1f)
+                                    label = { Text("Duración Adultos (ej: 24 hours)") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .textFieldKeyNavigation(focusManager)
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = trialParam,
+                                    onValueChange = { trialParam = it },
+                                    label = { Text("Parámetro trial (1 o 0)") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .textFieldKeyNavigation(focusManager)
+                                )
+                                OutlinedTextField(
+                                    value = maxConnections,
+                                    onValueChange = { maxConnections = it },
+                                    label = { Text("Max Conexiones (ej: 2)") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .textFieldKeyNavigation(focusManager)
                                 )
                             }
                             OutlinedTextField(
                                 value = bouquetsDefault,
                                 onValueChange = { bouquetsDefault = it },
                                 label = { Text("Bouquets por Defecto (separados por coma)") },
-                                modifier = Modifier.fillMaxWidth()
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                             OutlinedTextField(
                                 value = bouquetAdults,
                                 onValueChange = { bouquetAdults = it },
                                 label = { Text("ID Bouquet Adultos") },
-                                modifier = Modifier.fillMaxWidth()
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                         }
                     }
@@ -320,13 +446,23 @@ fun HttpSettingsDialog(
                                 value = deleteLineUrl,
                                 onValueChange = { deleteLineUrl = it },
                                 label = { Text("URL Borrado ({id} se reemplaza por el ID)") },
-                                modifier = Modifier.fillMaxWidth()
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                             OutlinedTextField(
                                 value = deleteLineReferer,
                                 onValueChange = { deleteLineReferer = it },
                                 label = { Text("Header Referer Borrado") },
-                                modifier = Modifier.fillMaxWidth()
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                         }
                     }
@@ -347,13 +483,23 @@ fun HttpSettingsDialog(
                                 value = tableUrl,
                                 onValueChange = { tableUrl = it },
                                 label = { Text("URL Tabla") },
-                                modifier = Modifier.fillMaxWidth()
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                             OutlinedTextField(
                                 value = tableReferer,
                                 onValueChange = { tableReferer = it },
                                 label = { Text("Header Referer Tabla") },
-                                modifier = Modifier.fillMaxWidth()
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                         }
                     }
@@ -374,9 +520,12 @@ fun HttpSettingsDialog(
                                 value = customHeadersJson,
                                 onValueChange = { customHeadersJson = it },
                                 label = { Text("Formato JSON: {\"Header-Key\": \"Value\"}") },
-                                singleLine = false,
-                                maxLines = 3,
-                                modifier = Modifier.fillMaxWidth()
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                         }
                     }
@@ -413,7 +562,11 @@ fun HttpSettingsDialog(
                                 label = { Text("Tema/Tópico ntfy.sh (ej: Gato_Negro_Reportes)") },
                                 placeholder = { Text("Gato_Negro_Reportes") },
                                 singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(onDone = { focusManager.moveFocus(FocusDirection.Down) }),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager)
                             )
                             Text(
                                 text = "URL de suscripción: https://ntfy.sh/${ntfyTopic.ifEmpty { "Gato_Negro_Reportes" }}",
@@ -432,40 +585,19 @@ fun HttpSettingsDialog(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = onDismissRequest) {
+                    TextButton(
+                        onClick = onDismissRequest,
+                        modifier = Modifier.dpadAndTabNav(focusManager, onEnter = onDismissRequest)
+                    ) {
                         Text("Cancelar", color = GeoOnSurfaceVariant)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
-                        onClick = {
-                            val newConfig = HttpConfig(
-                                ignoreSslErrors = ignoreSslErrors,
-                                userAgent = userAgent.trim(),
-                                loginUrl = loginUrl.trim(),
-                                loginReferer = loginReferer.trim(),
-                                loginOrigin = loginOrigin.trim(),
-                                createLineUrl = createLineUrl.trim(),
-                                createLineReferer = createLineReferer.trim(),
-                                packageAdults = packageAdults.trim(),
-                                packageNormal = packageNormal.trim(),
-                                packageDurationAdults = packageDurationAdults.trim(),
-                                packageDurationNormal = packageDurationNormal.trim(),
-                                bouquetsDefault = bouquetsDefault.trim(),
-                                bouquetAdults = bouquetAdults.trim(),
-                                deleteLineUrl = deleteLineUrl.trim(),
-                                deleteLineReferer = deleteLineReferer.trim(),
-                                tableUrl = tableUrl.trim(),
-                                tableReferer = tableReferer.trim(),
-                                customHeadersJson = customHeadersJson.trim()
-                            )
-                            HttpConfigStorage.saveConfig(context, newConfig)
-                            PreferencesManager.setSyncNtfyTopic(context, ntfyTopic.trim())
-                            Toast.makeText(context, "Configuración HTTP y Notificaciones guardada", Toast.LENGTH_SHORT).show()
-                            onDismissRequest()
-                        },
+                        onClick = saveConfigAction,
+                        modifier = Modifier.dpadAndTabNav(focusManager, onEnter = saveConfigAction),
                         colors = ButtonDefaults.buttonColors(containerColor = GeoPrimary)
                     ) {
-                        Text("Guardar Configuración", fontWeight = FontWeight.Bold)
+                        Text("Guardar Configuración", fontWeight = FontWeight.Bold, color = GeoSurface)
                     }
                 }
             }

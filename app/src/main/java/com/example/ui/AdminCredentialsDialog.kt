@@ -2,6 +2,8 @@ package com.example.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -9,7 +11,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -27,9 +32,20 @@ fun AdminCredentialsDialog(
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
 
+    val focusManager = LocalFocusManager.current
+
+    val saveAction = {
+        if (username.isNotBlank()) {
+            onSaveCredentials(username.trim(), password.trim())
+            onDismissRequest()
+        }
+    }
+
     Dialog(onDismissRequest = onDismissRequest) {
         Card(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = GeoSurface)
         ) {
@@ -48,14 +64,19 @@ fun AdminCredentialsDialog(
                     "Modifica el usuario y contraseña del distribuidor (reseller).",
                     style = MaterialTheme.typography.bodyMedium,
                     color = GeoOnSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 24.dp)
+                    modifier = Modifier.padding(bottom = 20.dp)
                 )
 
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
                     label = { Text("Usuario") },
-                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .textFieldKeyNavigation(focusManager),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = GeoSurface,
                         unfocusedContainerColor = GeoSurface,
@@ -70,9 +91,15 @@ fun AdminCredentialsDialog(
                     value = password,
                     onValueChange = { password = it },
                     label = { Text("Nueva Contraseña") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.moveFocus(FocusDirection.Down) }),
                     visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
-                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        IconButton(
+                            onClick = { passwordVisible = !passwordVisible },
+                            modifier = Modifier.dpadAndTabNav(focusManager)
+                        ) {
                             Icon(
                                 imageVector = if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
                                 contentDescription = if (passwordVisible) "Ocultar contraseña" else "Mostrar contraseña",
@@ -80,8 +107,9 @@ fun AdminCredentialsDialog(
                             )
                         }
                     },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .textFieldKeyNavigation(focusManager),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = GeoSurface,
                         unfocusedContainerColor = GeoSurface,
@@ -96,17 +124,16 @@ fun AdminCredentialsDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
-                    TextButton(onClick = onDismissRequest) {
+                    TextButton(
+                        onClick = onDismissRequest,
+                        modifier = Modifier.dpadAndTabNav(focusManager, onEnter = onDismissRequest)
+                    ) {
                         Text("Cancelar", color = GeoOnSurfaceVariant)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
-                        onClick = {
-                            if (username.isNotBlank() && password.isNotBlank()) {
-                                onSaveCredentials(username.trim(), password.trim())
-                                onDismissRequest()
-                            }
-                        },
+                        onClick = saveAction,
+                        modifier = Modifier.dpadAndTabNav(focusManager, onEnter = saveAction),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = GeoPrimary,
                             contentColor = GeoSurface
