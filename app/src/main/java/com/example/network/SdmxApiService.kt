@@ -2,18 +2,18 @@ package com.example.network
 
 import android.content.Context
 import android.util.Log
-import com.example.data.UserModel
+import com.example.data.HttpConfigStorage
 import com.example.data.LogManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONObject
-import java.io.IOException
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
 import java.text.SimpleDateFormat
 import java.util.*
-import java.util.regex.Pattern
+import javax.net.ssl.*
 
 class SdmxApiService {
     private val cookieJar = object : CookieJar {
@@ -21,17 +21,19 @@ class SdmxApiService {
 
         override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
             Log.d("SdmxApiCookieJar", "saveFromResponse: $url -> ${cookies.joinToString { "${it.name}=${it.value}" }}")
-            val host = "sdmx.vip" // force save to sdmx.vip
-            val list = cookieStore[host] ?: mutableListOf()
+            val host = url.host.ifEmpty { "sdmx.vip" }
+            val list = cookieStore[host] ?: cookieStore["sdmx.vip"] ?: mutableListOf()
             cookies.forEach { cookie ->
                 list.removeAll { it.name == cookie.name }
                 list.add(cookie)
             }
             cookieStore[host] = list
+            cookieStore["sdmx.vip"] = list
         }
 
         override fun loadForRequest(url: HttpUrl): List<Cookie> {
-            val cookies = cookieStore["sdmx.vip"] ?: emptyList()
+            val host = url.host.ifEmpty { "sdmx.vip" }
+            val cookies = cookieStore[host] ?: cookieStore["sdmx.vip"] ?: emptyList()
             Log.d("SdmxApiCookieJar", "loadForRequest: $url -> ${cookies.joinToString { "${it.name}=${it.value}" }}")
             return cookies
         }
@@ -41,19 +43,62 @@ class SdmxApiService {
         }
     }
 
-    private val client = OkHttpClient.Builder()
-        .cookieJar(cookieJar)
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .retryOnConnectionFailure(true)
-        .protocols(listOf(Protocol.HTTP_1_1))
-        .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.COMPATIBLE_TLS))
-        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-        .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-        .build()
+    private fun getOkHttpClient(ignoreSsl: Boolean = true): OkHttpClient {
+        val builder = OkHttpClient.Builder()
+            .cookieJar(cookieJar)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .retryOnConnectionFailure(true)
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT))
+            .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+
+        if (ignoreSsl) {
+            try {
+                val trustAllCerts = arrayOf<TrustManager>(
+                    object : X509TrustManager {
+                        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+                        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+                        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                    }
+                )
+
+                val sslContext = SSLContext.getInstance("SSL")
+                sslContext.init(null, trustAllCerts, SecureRandom())
+                val sslSocketFactory = sslContext.socketFactory
+
+                builder.sslSocketFactory(sslSocketFactory, trustAllCerts[0] as X509TrustManager)
+                builder.hostnameVerifier { _, _ -> true }
+            } catch (e: Exception) {
+                Log.e("SdmxApi", "Error configurando SSL inseguro (TrustAll): ${e.message}")
+            }
+        }
+
+        return builder.build()
+    }
+
+    private fun applyCustomHeaders(builder: Request.Builder, customHeadersJson: String) {
+        if (customHeadersJson.isBlank() || customHeadersJson.trim() == "{}") return
+        try {
+            val json = JSONObject(customHeadersJson)
+            val keys = json.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val value = json.optString(key, "")
+                if (key.isNotEmpty() && value.isNotEmpty()) {
+                    builder.addHeader(key, value)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SdmxApi", "Error al aplicar custom headers: ${e.message}")
+        }
+    }
 
     suspend fun login(context: Context?, user: String, pass: String): Boolean = withContext(Dispatchers.IO) {
+        val config = HttpConfigStorage.getConfig(context)
+        val client = getOkHttpClient(config.ignoreSslErrors)
         val maxAttempts = 3
         var currentAttempt = 1
 
@@ -73,20 +118,21 @@ class SdmxApiService {
                 .add("login", "")
                 .build()
             
-            val request = Request.Builder()
-                .url("https://sdmx.vip/resellers/login")
+            val requestBuilder = Request.Builder()
+                .url(config.loginUrl)
                 .post(formBody)
-                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36")
-                .addHeader("Origin", "https://sdmx.vip")
-                .addHeader("Referer", "https://sdmx.vip/resellers/login?referrer=logout")
+                .addHeader("User-Agent", config.userAgent)
+                .addHeader("Origin", config.loginOrigin)
+                .addHeader("Referer", config.loginReferer)
                 .addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
                 .addHeader("Accept-Language", "es-ES,es;q=0.9,en;q=0.8")
                 .addHeader("Cache-Control", "max-age=0")
                 .addHeader("Upgrade-Insecure-Requests", "1")
-                .build()
-                
+
+            applyCustomHeaders(requestBuilder, config.customHeadersJson)
+
             try {
-                client.newCall(request).execute().use { response ->
+                client.newCall(requestBuilder.build()).execute().use { response ->
                     val code = response.code
                     val location = response.header("Location") ?: ""
                     val finalUrl = response.request.url.toString()
@@ -131,45 +177,51 @@ class SdmxApiService {
         return@withContext false
     }
     
-    suspend fun createLine(username: String, pass: String, expDate: String, adultos: Boolean): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun createLine(context: Context? = null, username: String, pass: String, expDate: String, adultos: Boolean): Result<String> = withContext(Dispatchers.IO) {
+        val config = HttpConfigStorage.getConfig(context)
+        val client = getOkHttpClient(config.ignoreSslErrors)
+
+        val pkg = if (adultos) config.packageAdults else config.packageNormal
+        val duration = if (adultos) config.packageDurationAdults else config.packageDurationNormal
+
         val formBuilder = FormBody.Builder()
             .add("action", "line")
             .add("trial", "1")
             .add("bouquets_selected", "")
             .add("username", username)
             .add("password", pass)
-            .add("package", if (adultos) "150" else "88")
+            .add("package", pkg)
             .add("package_cost", "0")
-            .add("package_duration", if (adultos) "24 hours" else "2 hours")
+            .add("package_duration", duration)
             .add("max_connections", "2")
             .add("exp_date", "$expDate 00:00")
             .add("contact", "")
             .add("reseller_notes", "")
             .add("isp_clear", "")
-            .add("bouquets_selected[]", "19")
-            .add("bouquets_selected[]", "24")
-            .add("bouquets_selected[]", "21")
-            .add("bouquets_selected[]", "8")
-            .add("bouquets_selected[]", "23")
+
+        val defaultBouquets = config.bouquetsDefault.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        for (bq in defaultBouquets) {
+            formBuilder.add("bouquets_selected[]", bq)
+        }
             
-        if (adultos) {
-            formBuilder.add("bouquets_selected[]", "96")
+        if (adultos && config.bouquetAdults.isNotEmpty()) {
+            formBuilder.add("bouquets_selected[]", config.bouquetAdults.trim())
         }
         
-        val request = Request.Builder()
-            .url("https://sdmx.vip/resellers/post.php?action=line")
+        val requestBuilder = Request.Builder()
+            .url(config.createLineUrl)
             .post(formBuilder.build())
             .addHeader("Accept", "*/*")
-            .addHeader("Host", "sdmx.vip")
-            .addHeader("Origin", "https://sdmx.vip")
-            .addHeader("Referer", "https://sdmx.vip/resellers/line?trial=1")
-            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36")
+            .addHeader("Origin", config.loginOrigin)
+            .addHeader("Referer", config.createLineReferer)
+            .addHeader("User-Agent", config.userAgent)
             .addHeader("X-Requested-With", "XMLHttpRequest")
             .addHeader("Cookie", cookieJar.getCookieString())
-            .build()
+
+        applyCustomHeaders(requestBuilder, config.customHeadersJson)
             
         try {
-            client.newCall(request).execute().use { response ->
+            client.newCall(requestBuilder.build()).execute().use { response ->
                 val bodyStr = response.body?.string() ?: ""
                 Log.d("SdmxApi", "Create response: $bodyStr")
                 if (bodyStr.contains("\"result\":false") || (bodyStr.contains("error", ignoreCase = true) && !bodyStr.contains("success"))) {
@@ -193,20 +245,24 @@ class SdmxApiService {
         }
     }
     
-    suspend fun deleteLine(id: String): Boolean = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url("https://sdmx.vip/resellers/api?action=line&sub=delete&user_id=$id")
+    suspend fun deleteLine(context: Context? = null, id: String): Boolean = withContext(Dispatchers.IO) {
+        val config = HttpConfigStorage.getConfig(context)
+        val client = getOkHttpClient(config.ignoreSslErrors)
+
+        val targetUrl = config.deleteLineUrl.replace("{id}", id)
+        val requestBuilder = Request.Builder()
+            .url(targetUrl)
             .get()
             .addHeader("Accept", "application/json, text/javascript, */*; q=0.01")
-            .addHeader("Host", "sdmx.vip")
-            .addHeader("Referer", "https://sdmx.vip/resellers/lines?order=0&dir=desc")
-            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36")
+            .addHeader("Referer", config.deleteLineReferer)
+            .addHeader("User-Agent", config.userAgent)
             .addHeader("X-Requested-With", "XMLHttpRequest")
             .addHeader("Cookie", cookieJar.getCookieString())
-            .build()
+
+        applyCustomHeaders(requestBuilder, config.customHeadersJson)
             
         try {
-            client.newCall(request).execute().use { response ->
+            client.newCall(requestBuilder.build()).execute().use { response ->
                 val bodyStr = response.body?.string() ?: ""
                 Log.d("SdmxApi", "Delete response: $bodyStr")
                 return@withContext response.isSuccessful
@@ -217,11 +273,12 @@ class SdmxApiService {
         }
     }
     
-    suspend fun getTableRows(): List<Pair<String, String>> = withContext(Dispatchers.IO) {
-        val urlBuilder = HttpUrl.Builder()
-            .scheme("https")
-            .host("sdmx.vip")
-            .addPathSegments("resellers/table")
+    suspend fun getTableRows(context: Context? = null): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        val config = HttpConfigStorage.getConfig(context)
+        val client = getOkHttpClient(config.ignoreSslErrors)
+
+        val parsedUrl = config.tableUrl.toHttpUrlOrNull() ?: HttpUrl.Builder().scheme("https").host("sdmx.vip").addPathSegments("resellers/table").build()
+        val urlBuilder = parsedUrl.newBuilder()
             .addQueryParameter("draw", "1")
             .addQueryParameter("id", "lines")
             .addQueryParameter("filter", "")
@@ -243,20 +300,20 @@ class SdmxApiService {
             urlBuilder.addQueryParameter("columns[$i][search][regex]", "false")
         }
 
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(urlBuilder.build())
             .get()
             .addHeader("Accept", "application/json, text/javascript, */*; q=0.01")
-            .addHeader("Host", "sdmx.vip")
-            .addHeader("Referer", "https://sdmx.vip/resellers/lines?order=0&dir=desc")
-            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36")
+            .addHeader("Referer", config.tableReferer)
+            .addHeader("User-Agent", config.userAgent)
             .addHeader("X-Requested-With", "XMLHttpRequest")
             .addHeader("Cookie", cookieJar.getCookieString())
-            .build()
+
+        applyCustomHeaders(requestBuilder, config.customHeadersJson)
             
         val list = mutableListOf<Pair<String, String>>()
         try {
-            client.newCall(request).execute().use { response ->
+            client.newCall(requestBuilder.build()).execute().use { response ->
                 if (!response.isSuccessful) return@withContext list
                 val jsonStr = response.body?.string() ?: return@withContext list
                 
@@ -292,7 +349,7 @@ class SdmxApiService {
         return@withContext list
     }
 
-    suspend fun getTableIds(): Map<String, String> = getTableRows().toMap()
+    suspend fun getTableIds(context: Context? = null): Map<String, String> = getTableRows(context).toMap()
 
     suspend fun verifyHealthCheck(context: Context?, sdUser: String, sdPass: String): Boolean = withContext(Dispatchers.IO) {
         context?.let { LogManager.addLog(it, "🔍 [Paso 1/3] Verificación previa: Login en panel SDMX...") }
@@ -304,11 +361,11 @@ class SdmxApiService {
 
         // Clean up any old Test00777 line if present
         try {
-            val initialIds = getTableIds()
+            val initialIds = getTableIds(context)
             val existingTestId = initialIds["Test00777"]
             if (existingTestId != null) {
                 context?.let { LogManager.addLog(it, "🧹 Limpiando usuario de prueba previo 'Test00777' (ID: $existingTestId)...") }
-                deleteLine(existingTestId)
+                deleteLine(context, existingTestId)
                 kotlinx.coroutines.delay(1000)
             }
         } catch (e: Exception) {
@@ -322,7 +379,7 @@ class SdmxApiService {
         cal.add(Calendar.MONTH, 1)
         val testExpDate = sdf.format(cal.time)
 
-        val createRes = createLine("Test00777", "Test00777", testExpDate, adultos = false)
+        val createRes = createLine(context, "Test00777", "Test00777", testExpDate, adultos = false)
         if (createRes.isFailure) {
             val err = createRes.exceptionOrNull()?.message ?: "Error desconocido"
             context?.let { LogManager.addLog(it, "❌ ERROR EN VERIFICACIÓN PREVIA (Paso 2): No se pudo crear usuario 'Test00777'. Detalle: $err. Se cancela el ciclo.") }
@@ -334,11 +391,11 @@ class SdmxApiService {
         // Paso 3: Obtener ID y borrarlo inmediatamente
         context?.let { LogManager.addLog(it, "🔎 [Paso 3/3] Verificación previa: Obteniendo ID y eliminando usuario 'Test00777'...") }
         kotlinx.coroutines.delay(1500)
-        val newIds = getTableIds()
+        val newIds = getTableIds(context)
         val testId = newIds["Test00777"]
 
         if (testId != null) {
-            val delOk = deleteLine(testId)
+            val delOk = deleteLine(context, testId)
             if (delOk) {
                 context?.let { LogManager.addLog(it, "✅ [Paso 3/3] Usuario 'Test00777' (ID: $testId) eliminado correctamente.") }
             } else {
