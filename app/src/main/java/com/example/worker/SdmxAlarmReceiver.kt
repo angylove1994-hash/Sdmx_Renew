@@ -15,12 +15,15 @@ class SdmxAlarmReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_TRIGGER_SDMX_RENEWAL = "com.example.sdmx.ACTION_TRIGGER_RENEWAL"
         const val EXTRA_HOURS = "extra_hours"
+        const val EXTRA_IS_RETRY = "is_retry"
         private const val TAG = "SdmxAlarmReceiver"
     }
 
     override fun onReceive(context: Context, intent: Intent?) {
-        Log.d(TAG, "SdmxAlarmReceiver received intent: ${intent?.action}")
-        LogManager.addLog(context, "⚡ [Alarma Exacta] Disparo de alarma programada recibido.")
+        val isRetry = intent?.getBooleanExtra(EXTRA_IS_RETRY, false) ?: false
+        val triggerTag = if (isRetry) "Reintento Automático (10s)" else "Alarma Exacta (24/7)"
+        Log.d(TAG, "SdmxAlarmReceiver received intent: ${intent?.action} | isRetry: $isRetry")
+        LogManager.addLog(context, "⚡ [$triggerTag] Disparo de alarma recibido.")
 
         val pendingResult = goAsync()
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
@@ -33,20 +36,14 @@ class SdmxAlarmReceiver : BroadcastReceiver() {
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Execute renewal cycle via the unified engine
-                SdmxExecutionEngine.executeRenewalCycle(context, "Alarma Exacta (24/7)")
+                // Execute renewal cycle via the unified engine (it handles scheduling next run or 10s retry)
+                SdmxExecutionEngine.executeRenewalCycle(context, triggerTag)
             } catch (e: Exception) {
                 Log.e(TAG, "Error in alarm receiver execution: ${e.message}", e)
                 LogManager.addLog(context, "❌ Error en receptor de alarma: ${e.message}")
+                // Fallback retry in 10s if unexpected error occurred
+                SdmxAlarmScheduler.scheduleRetryAlarm(context, 10)
             } finally {
-                try {
-                    // Reschedule next cycle
-                    val hours = PreferencesManager.getSyncIntervalHours(context)
-                    SdmxAlarmScheduler.scheduleNextExactAlarm(context, hours)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-
                 try {
                     if (wakeLock?.isHeld == true) {
                         wakeLock.release()

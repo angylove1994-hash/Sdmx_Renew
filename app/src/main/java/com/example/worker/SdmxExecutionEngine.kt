@@ -64,12 +64,15 @@ object SdmxExecutionEngine {
                     context = context,
                     isSuccess = false,
                     summaryTitle = "Error Crítico ($triggerSource)",
-                    summaryDetails = "Excepción: ${e.message}",
+                    summaryDetails = "Excepción: ${e.message ?: "Fallo de conexión"}. Reintentando automáticamente en 10 segundos.",
                     recentLogs = LogManager.getLogs(context)
                 )
             } catch (t: Throwable) {
                 t.printStackTrace()
             }
+
+            LogManager.addLog(context, "⏳ Reintentando ciclo automáticamente en 10 segundos...")
+            SdmxAlarmScheduler.scheduleRetryAlarm(context, 10)
 
             return@withContext RenewalExecutionResult(
                 success = false,
@@ -111,25 +114,30 @@ object SdmxExecutionEngine {
             return RenewalExecutionResult(false, 0, 0, msg)
         }
 
-        LogManager.addLog(context, "🚀 [$triggerSource] Iniciando ciclo de renovación agresivo para: $user...")
+        // Clear previous logs so the log and alerts channel are fresh and not saturated
+        LogManager.clearLogs(context)
+        LogManager.addLog(context, "🚀 [$triggerSource] Iniciando ciclo de renovación para: $user...")
 
         // Step 1: Health check
         val healthCheckOk = api.verifyHealthCheck(context, user, pass)
         if (!healthCheckOk) {
             val msg = "❌ [$triggerSource] Verificación previa fallida. No se pudo validar acceso al panel SDMX."
             LogManager.addLog(context, msg)
-            notificationHelper.showError("Verificación previa fallida. Revisa el log.")
+            notificationHelper.showError("Verificación previa fallida. Reintentando en 10s...")
             try {
                 NtfyManager.sendExecutionReport(
                     context = context,
                     isSuccess = false,
                     summaryTitle = "Fallo en Verificación Previa ($triggerSource)",
-                    summaryDetails = "No se pudo iniciar sesión o contactar al panel SDMX para el usuario '$user'.",
+                    summaryDetails = "No se pudo iniciar sesión o contactar al panel SDMX para el usuario '$user'. Reintentando automáticamente en 10 segundos.",
                     recentLogs = LogManager.getLogs(context)
                 )
             } catch (t: Throwable) {
                 t.printStackTrace()
             }
+
+            LogManager.addLog(context, "⏳ Reintentando ciclo automáticamente en 10 segundos...")
+            SdmxAlarmScheduler.scheduleRetryAlarm(context, 10)
             return RenewalExecutionResult(false, 0, 0, msg)
         }
 
@@ -197,6 +205,28 @@ object SdmxExecutionEngine {
                 LogManager.addLog(context, "❌ [$triggerSource] Error al renovar ${userToRenew.usuario}: $err")
             }
             delay(400)
+        }
+
+        // If no lines could be renewed due to panel issues, trigger a 10s retry
+        if (procesados == 0 && vigentes.isNotEmpty()) {
+            val failMsg = "❌ [$triggerSource] Fallaron todas las renovaciones ($procesados/${vigentes.size}). Reintentando automáticamente en 10 segundos..."
+            LogManager.addLog(context, failMsg)
+            notificationHelper.showError("Fallo en renovación (0/${vigentes.size}). Reintentando en 10s.")
+            try {
+                NtfyManager.sendExecutionReport(
+                    context = context,
+                    isSuccess = false,
+                    summaryTitle = "Fallo Total de Renovación (0/${vigentes.size})",
+                    summaryDetails = "No se pudo renovar ninguna cuenta en el panel SDMX. Reintentando en 10 segundos.",
+                    recentLogs = LogManager.getLogs(context)
+                )
+            } catch (t: Throwable) {
+                t.printStackTrace()
+            }
+
+            LogManager.addLog(context, "⏳ Reintentando ciclo automáticamente en 10 segundos...")
+            SdmxAlarmScheduler.scheduleRetryAlarm(context, 10)
+            return RenewalExecutionResult(false, 0, vigentes.size, failMsg)
         }
 
         delay(1500)

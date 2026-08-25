@@ -91,44 +91,48 @@ object NtfyManager {
         isSuccess: Boolean,
         summaryTitle: String,
         summaryDetails: String,
-        recentLogs: List<String>
+        recentLogs: List<String> = emptyList()
     ): Boolean {
         val title = if (isSuccess) {
             "SDMX: $summaryTitle"
         } else {
-            "SDMX ALERTA: $summaryTitle"
+            "🚨 SDMX ALERTA: $summaryTitle"
         }
 
-        val tags = if (isSuccess) "white_check_mark,arrows_counterclockwise" else "warning,x,loudspeaker"
-        val priority = if (isSuccess) "default" else "high"
+        val tags = if (isSuccess) "white_check_mark,arrows_counterclockwise" else "warning,rotating_light,loudspeaker"
+        val priority = if (isSuccess) "default" else "urgent"
 
         val sb = StringBuilder()
-        sb.appendLine("📡 REPORTE DE EJECUCIÓN SDMX AUTO-RENEW")
-        sb.appendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        sb.appendLine("📋 Estado: ${if (isSuccess) "✅ EXITOSO" else "❌ CON ERRORES / FALLIDO"}")
+        sb.appendLine("📡 SDMX AUTO-RENEW")
+        sb.appendLine("━━━━━━━━━━━━━━━━━━━━━")
+        sb.appendLine("📋 Estado: ${if (isSuccess) "✅ EXITOSO" else "❌ FALLIDO (Reintento en 10s)"}")
         sb.appendLine("ℹ️ Detalle: $summaryDetails")
-        sb.appendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        sb.appendLine("📜 LOG COMPLETO DE EJECUCIÓN:")
-        
-        if (recentLogs.isEmpty()) {
-            sb.appendLine("(Sin líneas de log)")
-        } else {
-            // Include chronological logs (oldest to newest for easy reading)
-            recentLogs.reversed().takeLast(40).forEach { line ->
-                sb.appendLine(line)
+
+        // In case of error, append only the key failure reason instead of entire log flood
+        if (!isSuccess && recentLogs.isNotEmpty()) {
+            val errorLines = recentLogs.filter {
+                it.contains("❌") || it.contains("Error", ignoreCase = true) || it.contains("⚠️") || it.contains("Fallo", ignoreCase = true)
+            }.take(3)
+
+            if (errorLines.isNotEmpty()) {
+                sb.appendLine("━━━━━━━━━━━━━━━━━━━━━")
+                sb.appendLine("🔍 Motivo del error:")
+                errorLines.forEach { line ->
+                    sb.appendLine("• $line")
+                }
             }
         }
 
         val success = sendPushNotification(
             context = context,
             title = title,
-            body = sb.toString(),
+            body = sb.toString().trim(),
             tags = tags,
             priority = priority
         )
 
         if (success) {
-            LogManager.addLog(context, "📲 [Ntfy.sh] Reporte y logs enviados a https://ntfy.sh/${PreferencesManager.getNtfyTopic(context).ifEmpty { DEFAULT_TOPIC }}")
+            Log.d(TAG, "Ntfy push summary sent to ${PreferencesManager.getNtfyTopic(context).ifEmpty { DEFAULT_TOPIC }}")
         }
         return success
     }

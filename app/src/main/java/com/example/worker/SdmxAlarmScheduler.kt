@@ -91,6 +91,65 @@ object SdmxAlarmScheduler {
         }
     }
 
+    fun scheduleRetryAlarm(context: Context, seconds: Int = 10) {
+        try {
+            val retryDelayMs = seconds * 1000L
+            val triggerAtMillis = System.currentTimeMillis() + retryDelayMs
+
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+            if (alarmManager != null) {
+                val intent = Intent(context, SdmxAlarmReceiver::class.java).apply {
+                    action = SdmxAlarmReceiver.ACTION_TRIGGER_SDMX_RENEWAL
+                    putExtra(SdmxAlarmReceiver.EXTRA_IS_RETRY, true)
+                }
+
+                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                } else {
+                    PendingIntent.FLAG_UPDATE_CURRENT
+                }
+
+                val pendingIntent = PendingIntent.getBroadcast(
+                    context,
+                    ALARM_REQUEST_CODE,
+                    intent,
+                    flags
+                )
+
+                val showIntent = Intent(context, MainActivity::class.java)
+                val showPendingIntent = PendingIntent.getActivity(
+                    context,
+                    0,
+                    showIntent,
+                    flags
+                )
+
+                try {
+                    val clockInfo = AlarmManager.AlarmClockInfo(triggerAtMillis, showPendingIntent)
+                    alarmManager.setAlarmClock(clockInfo, pendingIntent)
+                    Log.d(TAG, "Retry AlarmClock scheduled in $seconds seconds ($triggerAtMillis)")
+                } catch (e: Exception) {
+                    Log.w(TAG, "setAlarmClock retry failed: ${e.message}")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        try {
+                            alarmManager.setExactAndAllowWhileIdle(
+                                AlarmManager.RTC_WAKEUP,
+                                triggerAtMillis,
+                                pendingIntent
+                            )
+                        } catch (ex: Exception) {
+                            alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                        }
+                    } else {
+                        alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error scheduling retry alarm: ${e.message}", e)
+        }
+    }
+
     fun cancelAlarm(context: Context) {
         try {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
