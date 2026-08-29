@@ -1,6 +1,10 @@
 package com.example.ui
 
+import android.app.DatePickerDialog
+import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -8,12 +12,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CalendarToday
-import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Tag
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -43,10 +43,11 @@ fun EditUserDialog(
     onUpdateUser: (old: UserModel, new: UserModel) -> Unit,
     onDeleteUser: (UserModel) -> Unit
 ) {
+    val context = LocalContext.current
     var username by remember { mutableStateOf(user.usuario) }
     var password by remember { mutableStateOf(user.password) }
     var passwordVisible by remember { mutableStateOf(false) }
-    var expirationDate by remember { mutableStateOf(user.vencimiento.substringBefore("T")) }
+    var expirationDate by remember { mutableStateOf(user.vencimiento.substringBefore("T").trim()) }
     var lineId by remember { mutableStateOf(user.id) }
     var adultos by remember { mutableStateOf(user.adultos) }
     
@@ -56,20 +57,51 @@ fun EditUserDialog(
 
     val sdf = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
 
+    fun parseCurrentDate(): Calendar {
+        val cal = Calendar.getInstance()
+        try {
+            val date = sdf.parse(expirationDate.trim())
+            if (date != null) {
+                cal.time = date
+            }
+        } catch (_: Exception) {}
+        return cal
+    }
+
+    fun openDatePicker() {
+        val cal = parseCurrentDate()
+        val year = cal.get(Calendar.YEAR)
+        val month = cal.get(Calendar.MONTH)
+        val day = cal.get(Calendar.DAY_OF_MONTH)
+
+        val dpd = DatePickerDialog(
+            context,
+            { _, selectedYear, selectedMonth, selectedDay ->
+                val newCal = Calendar.getInstance()
+                newCal.set(selectedYear, selectedMonth, selectedDay)
+                expirationDate = sdf.format(newCal.time)
+            },
+            year,
+            month,
+            day
+        )
+        dpd.show()
+    }
+
     fun setDateFromToday(months: Int) {
         val cal = Calendar.getInstance()
         cal.add(Calendar.MONTH, months)
         expirationDate = sdf.format(cal.time)
     }
 
-    fun extendDate(months: Int) {
-        val cal = Calendar.getInstance()
-        try {
-            val currentParsed = sdf.parse(expirationDate.trim())
-            if (currentParsed != null && !currentParsed.before(cal.time)) {
-                cal.time = currentParsed
-            }
-        } catch (_: Exception) {}
+    fun addDays(days: Int) {
+        val cal = parseCurrentDate()
+        cal.add(Calendar.DAY_OF_MONTH, days)
+        expirationDate = sdf.format(cal.time)
+    }
+
+    fun addMonths(months: Int) {
+        val cal = parseCurrentDate()
         cal.add(Calendar.MONTH, months)
         expirationDate = sdf.format(cal.time)
     }
@@ -106,7 +138,7 @@ fun EditUserDialog(
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
-                .fillMaxHeight(0.90f),
+                .fillMaxHeight(0.92f),
             shape = RoundedCornerShape(20.dp),
             color = GeoSurface,
             tonalElevation = 6.dp
@@ -131,7 +163,7 @@ fun EditUserDialog(
                             color = GeoOnBackground
                         )
                         Text(
-                            "Edita credenciales, vigencia o canales de la cuenta",
+                            "Edita credenciales, fecha de vencimiento o canales",
                             fontSize = 11.sp,
                             color = GeoOnSurfaceVariant
                         )
@@ -224,98 +256,171 @@ fun EditUserDialog(
                         shape = RoundedCornerShape(12.dp)
                     )
 
-                    // Fecha Vencimiento
-                    OutlinedTextField(
-                        value = expirationDate,
-                        onValueChange = { expirationDate = it },
-                        label = { Text("Fecha Vencimiento (YYYY-MM-DD)") },
-                        leadingIcon = {
-                            Icon(Icons.Default.CalendarToday, contentDescription = "Vencimiento", tint = GeoPrimary, modifier = Modifier.size(18.dp))
-                        },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                        keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .textFieldKeyNavigation(focusManager),
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = GeoSurfaceVariant,
-                            unfocusedContainerColor = GeoSurfaceVariant,
-                            focusedIndicatorColor = GeoPrimary,
-                            unfocusedIndicatorColor = GeoOutline
-                        ),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    // Quick duration presets
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(GeoSurfaceVariant.copy(alpha = 0.5f))
-                            .padding(10.dp)
+                    // Fecha Vencimiento Section with Calendar Picker & Steppers
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = GeoSurfaceVariant.copy(alpha = 0.7f)),
+                        shape = RoundedCornerShape(14.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, GeoOutline.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            "Establecer vigencia desde hoy:",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = GeoOnSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            listOf(
-                                1 to "+1 M",
-                                2 to "+2 M",
-                                3 to "+3 M",
-                                6 to "+6 M",
-                                12 to "+1 Año"
-                            ).forEach { (m, label) ->
-                                OutlinedButton(
-                                    onClick = { setDateFromToday(m) },
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "📅 FECHA DE VENCIMIENTO",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = GeoPrimary,
+                                    letterSpacing = 1.sp
+                                )
+
+                                Button(
+                                    onClick = { openDatePicker() },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                     modifier = Modifier
-                                        .weight(1f)
-                                        .dpadAndTabNav(focusManager, onEnter = { setDateFromToday(m) }),
-                                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp),
+                                        .height(30.dp)
+                                        .dpadAndTabNav(focusManager, onEnter = { openDatePicker() }),
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GeoPrimary)
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = GeoPrimary,
+                                        contentColor = GeoSurface
+                                    )
                                 ) {
-                                    Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    Icon(Icons.Default.CalendarMonth, contentDescription = "Calendario", modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Elegir en Calendario", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
-                        }
 
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = {
-                                    expirationDate = sdf.format(Calendar.getInstance().time)
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            OutlinedTextField(
+                                value = expirationDate,
+                                onValueChange = { expirationDate = it },
+                                label = { Text("Fecha Manual (AAAA-MM-DD)") },
+                                leadingIcon = {
+                                    IconButton(
+                                        onClick = { openDatePicker() },
+                                        modifier = Modifier.dpadAndTabNav(focusManager, onEnter = { openDatePicker() })
+                                    ) {
+                                        Icon(Icons.Default.CalendarToday, contentDescription = "Vencimiento", tint = GeoPrimary, modifier = Modifier.size(18.dp))
+                                    }
                                 },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .dpadAndTabNav(focusManager, onEnter = {
+                                    .fillMaxWidth()
+                                    .textFieldKeyNavigation(focusManager),
+                                colors = TextFieldDefaults.colors(
+                                    focusedContainerColor = GeoSurface,
+                                    unfocusedContainerColor = GeoSurface,
+                                    focusedIndicatorColor = GeoPrimary,
+                                    unfocusedIndicatorColor = GeoOutline
+                                ),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // Day adjustments
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Días:", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = GeoOnSurfaceVariant, modifier = Modifier.width(36.dp))
+
+                                OutlinedButton(
+                                    onClick = { addDays(-1) },
+                                    modifier = Modifier.weight(1f).dpadAndTabNav(focusManager, onEnter = { addDays(-1) }),
+                                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text("-1 Día", fontSize = 9.sp)
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        expirationDate = sdf.format(Calendar.getInstance().time)
+                                    },
+                                    modifier = Modifier.weight(1f).dpadAndTabNav(focusManager, onEnter = {
                                         expirationDate = sdf.format(Calendar.getInstance().time)
                                     }),
-                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("Vence Hoy", fontSize = 10.sp)
+                                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text("Hoy", fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                OutlinedButton(
+                                    onClick = { addDays(1) },
+                                    modifier = Modifier.weight(1f).dpadAndTabNav(focusManager, onEnter = { addDays(1) }),
+                                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text("+1 Día", fontSize = 9.sp)
+                                }
+
+                                OutlinedButton(
+                                    onClick = { addDays(7) },
+                                    modifier = Modifier.weight(1f).dpadAndTabNav(focusManager, onEnter = { addDays(7) }),
+                                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text("+7 Días", fontSize = 9.sp)
+                                }
                             }
 
-                            OutlinedButton(
-                                onClick = { extendDate(1) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .dpadAndTabNav(focusManager, onEnter = { extendDate(1) }),
-                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp),
-                                shape = RoundedCornerShape(8.dp)
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            // Month adjustments
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Extender +1M", fontSize = 10.sp)
+                                Text("Meses:", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = GeoOnSurfaceVariant, modifier = Modifier.width(36.dp))
+
+                                OutlinedButton(
+                                    onClick = { addMonths(-1) },
+                                    modifier = Modifier.weight(1f).dpadAndTabNav(focusManager, onEnter = { addMonths(-1) }),
+                                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text("-1 M", fontSize = 9.sp)
+                                }
+
+                                OutlinedButton(
+                                    onClick = { addMonths(1) },
+                                    modifier = Modifier.weight(1f).dpadAndTabNav(focusManager, onEnter = { addMonths(1) }),
+                                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+                                    shape = RoundedCornerShape(6.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GeoPrimary)
+                                ) {
+                                    Text("+1 M", fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                OutlinedButton(
+                                    onClick = { addMonths(3) },
+                                    modifier = Modifier.weight(1f).dpadAndTabNav(focusManager, onEnter = { addMonths(3) }),
+                                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text("+3 M", fontSize = 9.sp)
+                                }
+
+                                OutlinedButton(
+                                    onClick = { addMonths(12) },
+                                    modifier = Modifier.weight(1f).dpadAndTabNav(focusManager, onEnter = { addMonths(12) }),
+                                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text("+1 Año", fontSize = 9.sp)
+                                }
                             }
                         }
                     }
@@ -414,14 +519,18 @@ fun EditUserDialog(
                         Button(
                             onClick = {
                                 if (username.isNotBlank() && password.isNotBlank()) {
+                                    val cleanedDate = expirationDate.trim().ifEmpty {
+                                        sdf.format(Calendar.getInstance().time)
+                                    }
                                     val updated = user.copy(
                                         id = lineId.trim(),
                                         usuario = username.trim(),
                                         password = password.trim(),
-                                        vencimiento = expirationDate.trim(),
+                                        vencimiento = cleanedDate,
                                         adultos = adultos
                                     )
                                     onUpdateUser(user, updated)
+                                    Toast.makeText(context, "Usuario y vencimiento ($cleanedDate) guardados", Toast.LENGTH_SHORT).show()
                                     onDismissRequest()
                                 }
                             },
@@ -432,7 +541,7 @@ fun EditUserDialog(
                             ),
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("Guardar", fontWeight = FontWeight.Bold)
+                            Text("Guardar Cambios", fontWeight = FontWeight.Bold)
                         }
                     }
                 }

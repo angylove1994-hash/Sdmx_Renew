@@ -58,6 +58,7 @@ fun MainScreen(viewModel: MainViewModel) {
     var userToEdit by remember { mutableStateOf<UserModel?>(null) }
     var showAdminCredentialsDialog by remember { mutableStateOf(false) }
     var showHttpSettingsDialog by remember { mutableStateOf(false) }
+    var showNtfyTopicDialog by remember { mutableStateOf(false) }
     var isIgnoringBattery by remember { mutableStateOf(BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)) }
 
     LaunchedEffect(Unit) {
@@ -340,11 +341,15 @@ fun MainScreen(viewModel: MainViewModel) {
                         }
 
                         // Push Notifications (ntfy.sh) Status Card
+                        val openNtfyAction = { showNtfyTopicDialog = true }
                         Card(
                             colors = CardDefaults.cardColors(containerColor = GeoSurfaceVariant.copy(alpha = 0.7f)),
                             shape = RoundedCornerShape(10.dp),
                             border = androidx.compose.foundation.BorderStroke(1.dp, GeoOutline.copy(alpha = 0.5f)),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = openNtfyAction)
+                                .dpadAndTabNav(focusManager, onEnter = openNtfyAction, borderShape = RoundedCornerShape(10.dp))
                         ) {
                             Column(modifier = Modifier.padding(8.dp)) {
                                 Row(
@@ -366,6 +371,13 @@ fun MainScreen(viewModel: MainViewModel) {
                                             fontWeight = FontWeight.Bold,
                                             color = GeoOnBackground
                                         )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "Cambiar",
+                                            tint = GeoPrimary,
+                                            modifier = Modifier.size(12.dp)
+                                        )
                                     }
                                     val testPushAction = { viewModel.sendTestNtfyPush() }
                                     TextButton(
@@ -379,7 +391,7 @@ fun MainScreen(viewModel: MainViewModel) {
                                     }
                                 }
                                 Text(
-                                    "Canal: https://ntfy.sh/$ntfyTopic",
+                                    "Canal: https://ntfy.sh/$ntfyTopic ✏️ (Toca para cambiar)",
                                     fontSize = 10.sp,
                                     fontFamily = FontFamily.Monospace,
                                     color = GeoOnSurfaceVariant,
@@ -740,6 +752,40 @@ fun MainScreen(viewModel: MainViewModel) {
                                     .dpadAndTabNav(focusManager, onEnter = { viewModel.setAggressiveMode(!isAggressiveMode) })
                             )
                         }
+
+                        // Mobile Push Channel Row
+                        val openNtfyMobile = { showNtfyTopicDialog = true }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(GeoSurfaceVariant.copy(alpha = 0.7f))
+                                .clickable(onClick = openNtfyMobile)
+                                .dpadAndTabNav(focusManager, onEnter = openNtfyMobile, borderShape = RoundedCornerShape(8.dp))
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.NotificationsActive,
+                                    contentDescription = "Push",
+                                    tint = GeoPrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text("Push: https://ntfy.sh/$ntfyTopic", fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = GeoOnBackground)
+                                    Text("Toca para cambiar canal o probar", fontSize = 9.sp, color = GeoPrimary)
+                                }
+                            }
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "Editar",
+                                tint = GeoPrimary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
                     }
                 }
 
@@ -939,6 +985,15 @@ fun MainScreen(viewModel: MainViewModel) {
         )
     }
 
+    if (showNtfyTopicDialog) {
+        NtfyTopicDialog(
+            currentTopic = ntfyTopic,
+            onDismissRequest = { showNtfyTopicDialog = false },
+            onSaveTopic = { newTopic -> viewModel.saveNtfyTopic(newTopic) },
+            onTestPush = { viewModel.sendTestNtfyPush() }
+        )
+    }
+
     LaunchedEffect(intervalHours) {
         val h = intervalHours.toIntOrNull() ?: 24
         try {
@@ -1017,7 +1072,8 @@ private fun UserItemCard(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     "ID: ${user.id.ifEmpty { "Pendiente" }}",
@@ -1025,12 +1081,21 @@ private fun UserItemCard(
                     fontFamily = FontFamily.Monospace,
                     color = GeoOnSurfaceVariant
                 )
-                Text(
-                    "Vence: ${user.vencimiento.substringBefore("T")}",
-                    fontSize = 11.sp,
-                    color = GeoPrimary,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.CalendarToday,
+                        contentDescription = "Vencimiento",
+                        tint = GeoPrimary,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        "Vence: ${user.vencimiento.substringBefore("T")}",
+                        fontSize = 11.sp,
+                        color = GeoPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
         }
     }
