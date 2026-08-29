@@ -273,13 +273,69 @@ class SdmxApiService {
         try {
             client.newCall(requestBuilder.build()).execute().use { response ->
                 val bodyStr = response.body?.string() ?: ""
-                Log.d("SdmxApi", "Delete response: $bodyStr")
-                return@withContext response.isSuccessful
+                Log.d("SdmxApi", "Delete response code=${response.code}, body: $bodyStr")
+                
+                context?.let { ctx ->
+                    val clean = bodyStr.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
+                    val disp = if (clean.length > 200) clean.substring(0, 200) + "..." else clean
+                    LogManager.addLog(ctx, "📥 [SDMX Delete Resp HTTP ${response.code}] $disp")
+                }
+
+                if (!response.isSuccessful) {
+                    return@withContext false
+                }
+
+                if (bodyStr.contains("\"result\":false", ignoreCase = true) || bodyStr.contains("\"result\": false", ignoreCase = true)) {
+                    return@withContext false
+                }
+
+                return@withContext true
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            context?.let { ctx ->
+                LogManager.addLog(ctx, "❌ Error al ejecutar borrado en SDMX: ${e.message}")
+            }
             return@withContext false
         }
+    }
+
+    suspend fun deleteUserFromPanel(
+        context: Context,
+        adminUser: String,
+        adminPass: String,
+        targetUsername: String,
+        explicitId: String? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
+        if (adminUser.isBlank() || adminPass.isBlank()) {
+            return@withContext Result.failure(Exception("Credenciales de administrador SDMX no configuradas"))
+        }
+
+        LogManager.addLog(context, "🔐 Autenticando en SDMX para borrar '$targetUsername'...")
+        val loginOk = login(context, adminUser, adminPass)
+        if (!loginOk) {
+            return@withContext Result.failure(Exception("Fallo al iniciar sesión en el panel SDMX"))
+        }
+
+        LogManager.addLog(context, "🔍 Buscando ID de '$targetUsername' en el panel...")
+        val table = getTableRows(context)
+        val match = table.find { it.second.equals(targetUsername.trim(), ignoreCase = true) }
+
+        val lineId = match?.first ?: explicitId?.trim()?.takeIf { it.isNotEmpty() }
+
+        if (lineId.isNullOrEmpty()) {
+            LogManager.addLog(context, "ℹ️ Usuario '$targetUsername' no encontrado en el panel (ya eliminado o inexistente).")
+            return@withContext Result.success("NOT_FOUND_OR_ALREADY_DELETED")
+        }
+
+        LogManager.addLog(context, "🗑️ Eliminando ID #$lineId ($targetUsername) del panel SDMX...")
+        val delOk = deleteLine(context, lineId)
+        if (!delOk) {
+            return@withContext Result.failure(Exception("El panel SDMX rechazó o no pudo procesar el borrado de la línea #$lineId"))
+        }
+
+        LogManager.addLog(context, "✅ Línea #$lineId ($targetUsername) borrada exitosamente del panel SDMX.")
+        return@withContext Result.success("DELETED_SUCCESS")
     }
     
     suspend fun getTableRows(context: Context? = null): List<Pair<String, String>> = withContext(Dispatchers.IO) {
@@ -404,16 +460,61 @@ class SdmxApiService {
         }
     }
 
-    suspend fun verifyHealthCheck(context: Context, user: String, pass: String): Boolean = withContext(Dispatchers.IO) {
-        LogManager.addLog(context, "🔍 Verificando estado del panel SDMX...")
+    suspend fun performControlValidation(context: Context, user: String, pass: String): Result<String> = withContext(Dispatchers.IO) {
+        if (user.isBlank() || pass.isBlank()) {
+            val err = "Credenciales de administrador SDMX no configuradas"
+            LogManager.addLog(context, "❌ [Control] $err")
+            return@withContext Result.failure(Exception(err))
+        }
+
+        LogManager.addLog(context, "🔍 [Validación Control] 1/3: Autenticando en SDMX como '$user'...")
         val loginOk = login(context, user, pass)
         if (!loginOk) {
-            LogManager.addLog(context, "❌ Prueba previa: Falló la autenticación con SDMX.")
-            return@withContext false
+            val err = "Fallo de autenticación en SDMX (usuario/contraseña incorrectos o panel no responde)"
+            LogManager.addLog(context, "❌ [Validación Control] $err")
+            return@withContext Result.failure(Exception(err))
         }
-        
+
+        val testUsername = "Test_Ctrl_${(1000..9999).random()}"
+        val testPassword = "pwd${(1000..9999).random()}"
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val cal = Calendar.getInstance().apply { add(Calendar.MONTH, 1) }
+        val expDate = sdf.format(cal.time)
+
+        LogManager.addLog(context, "🧪 [Validación Control] 2/3: Creando línea de prueba temporal '$testUsername'...")
+        val createResult = createLine(context, testUsername, testPassword, expDate, adultos = false)
+        if (createResult.isFailure) {
+            val err = createResult.exceptionOrNull()?.message ?: "Panel rechazó la creación de prueba"
+            LogManager.addLog(context, "❌ [Validación Control] Falló creación de prueba: $err")
+            return@withContext Result.failure(Exception("Fallo al crear usuario de prueba: $err"))
+        }
+
+        kotlinx.coroutines.delay(1000)
+
+        LogManager.addLog(context, "🧹 [Validación Control] 3/3: Verificando y eliminando línea de prueba '$testUsername'...")
         val rows = getTableRows(context)
-        LogManager.addLog(context, "✅ Prueba previa exitosa. Panel accesible, ${rows.size} líneas detectadas en SDMX.")
-        return@withContext true
+        val testMatch = rows.find { it.second.equals(testUsername, ignoreCase = true) }
+        val testId = testMatch?.first
+
+        if (testId.isNullOrEmpty()) {
+            val err = "No se localizó el ID del usuario de prueba '$testUsername' en la tabla SDMX"
+            LogManager.addLog(context, "⚠️ [Validación Control] $err")
+            return@withContext Result.failure(Exception(err))
+        }
+
+        val deleteOk = deleteLine(context, testId)
+        if (!deleteOk) {
+            val err = "El panel SDMX no pudo eliminar el usuario de prueba #$testId"
+            LogManager.addLog(context, "❌ [Validación Control] $err")
+            return@withContext Result.failure(Exception(err))
+        }
+
+        LogManager.addLog(context, "✅ [Validación Control] Prueba superada: Login, Creación y Borrado funcionan perfectamente.")
+        return@withContext Result.success("CONTROL_OK")
+    }
+
+    suspend fun verifyHealthCheck(context: Context, user: String, pass: String): Boolean = withContext(Dispatchers.IO) {
+        val result = performControlValidation(context, user, pass)
+        return@withContext result.isSuccess
     }
 }

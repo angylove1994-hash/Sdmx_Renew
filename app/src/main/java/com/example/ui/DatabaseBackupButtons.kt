@@ -85,8 +85,8 @@ fun DatabaseBackupButtons(
                     val listType = object : TypeToken<List<UserModel>>() {}.type
                     val importedUsers: List<UserModel>? = gson.fromJson(json, listType)
                     if (importedUsers != null && importedUsers.isNotEmpty()) {
+                        Toast.makeText(context, "Iniciando validación y carga (${importedUsers.size} usuarios)...", Toast.LENGTH_SHORT).show()
                         viewModel.replaceUsers(importedUsers)
-                        Toast.makeText(context, "Importados ${importedUsers.size} usuarios", Toast.LENGTH_SHORT).show()
                     } else {
                         Toast.makeText(context, "Formato JSON no válido o vacío", Toast.LENGTH_SHORT).show()
                     }
@@ -606,8 +606,8 @@ fun DatabaseBackupButtons(
                                     val listType = object : TypeToken<List<UserModel>>() {}.type
                                     val importedUsers: List<UserModel>? = gson.fromJson(jsonText.trim(), listType)
                                     if (importedUsers != null && importedUsers.isNotEmpty()) {
+                                        Toast.makeText(context, "Iniciando validación y carga (${importedUsers.size} usuarios)...", Toast.LENGTH_SHORT).show()
                                         viewModel.replaceUsers(importedUsers)
-                                        Toast.makeText(context, "Importados ${importedUsers.size} usuarios con éxito", Toast.LENGTH_SHORT).show()
                                         showPasteImportDialog = false
                                     } else {
                                         Toast.makeText(context, "Formato JSON inválido o lista vacía", Toast.LENGTH_LONG).show()

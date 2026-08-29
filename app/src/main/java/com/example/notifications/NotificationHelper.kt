@@ -86,7 +86,7 @@ class NotificationHelper(private val context: Context) {
             .build()
     }
 
-    fun showSuccess(message: String) {
+    fun showSuccess(message: String, title: String = "✅ SDMX Renovación Exitosa") {
         try {
             val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -97,7 +97,7 @@ class NotificationHelper(private val context: Context) {
             val openPendingIntent = PendingIntent.getActivity(context, 0, openAppIntent, piFlags)
 
             val notification = NotificationCompat.Builder(context, CHANNEL_ALERTS_ID)
-                .setContentTitle("✅ SDMX Renovación Exitosa")
+                .setContentTitle(title)
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -110,7 +110,7 @@ class NotificationHelper(private val context: Context) {
         }
     }
 
-    fun showError(message: String) {
+    fun showError(message: String, title: String = "⚠️ SDMX Atención Requerida") {
         try {
             val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -121,7 +121,7 @@ class NotificationHelper(private val context: Context) {
             val openPendingIntent = PendingIntent.getActivity(context, 0, openAppIntent, piFlags)
 
             val notification = NotificationCompat.Builder(context, CHANNEL_ALERTS_ID)
-                .setContentTitle("⚠️ SDMX Atención Requerida")
+                .setContentTitle(title)
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
                 .setSmallIcon(android.R.drawable.ic_dialog_alert)

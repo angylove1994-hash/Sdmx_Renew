@@ -8,6 +8,8 @@ import com.example.data.LogManager
 import com.example.data.PreferencesManager
 import com.example.data.UserModel
 import com.example.network.SdmxApiService
+import com.example.notifications.NotificationHelper
+import com.example.notifications.NtfyManager
 import com.example.worker.SdmxAlarmScheduler
 import com.example.worker.SdmxExecutionEngine
 import com.example.worker.SdmxForegroundService
@@ -169,35 +171,179 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     fun replaceUsers(newUsers: List<UserModel>) = viewModelScope.launch {
-        db.saveUsers(newUsers)
-        addLog("📥 BD importada: ${newUsers.size} usuarios cargados.")
-        val hours = intervalHours.value.toIntOrNull() ?: 24
-        SdmxAlarmScheduler.scheduleNextExactAlarm(getApplication(), hours)
+        _isLoading.value = true
+        val context = getApplication<Application>()
+        val notifHelper = NotificationHelper(context)
+
+        addLog("📥 [Importación JSON] Iniciando verificación y carga de ${newUsers.size} usuarios...")
+        try {
+            var sdUser = userSdmx.value?.trim() ?: ""
+            var sdPass = passSdmx.value?.trim() ?: ""
+            if (sdUser.isEmpty() || sdPass.isEmpty()) {
+                val (syncUser, syncPass) = PreferencesManager.getSyncCredentials(context)
+                sdUser = syncUser.trim()
+                sdPass = syncPass.trim()
+            }
+
+            if (sdUser.isEmpty() || sdPass.isEmpty()) {
+                val errorMsg = "Credenciales de administrador SDMX no configuradas."
+                addLog("❌ $errorMsg")
+                addLog("⚠️ En este momento no se puede cargar la base de datos.")
+                notifHelper.showError("En este momento no se puede cargar la base de datos (Faltan credenciales de admin SDMX).", "🚨 SDMX: Carga Cancelada")
+                NtfyManager.sendPushNotification(
+                    context = context,
+                    title = "🚨 SDMX: Carga de BD Cancelada",
+                    body = "❌ En este momento no se puede cargar la base de datos.\n\n🔍 Motivo: Credenciales de administrador SDMX no configuradas.",
+                    tags = "warning,x",
+                    priority = "urgent"
+                )
+                return@launch
+            }
+
+            addLog("🔬 [Importación JSON] Ejecutando validación de control (Login -> Creación de prueba -> Borrado de prueba)...")
+            val controlResult = api.performControlValidation(context, sdUser, sdPass)
+
+            if (controlResult.isFailure) {
+                val failReason = controlResult.exceptionOrNull()?.message ?: "El panel no respondió correctamente"
+                addLog("❌ [Importación JSON] Validación de control fallida: $failReason")
+                addLog("⛔ En este momento no se puede cargar la base de datos.")
+                notifHelper.showError("En este momento no se puede cargar la base de datos (Panel SDMX no superó la prueba de control).", "🚨 SDMX: Carga Cancelada")
+                NtfyManager.sendPushNotification(
+                    context = context,
+                    title = "🚨 SDMX: Carga de BD Cancelada",
+                    body = "❌ En este momento no se puede cargar la base de datos.\n\n🔍 Causa: La validación de control del panel SDMX falló ($failReason).\n\n📌 La base de datos no fue modificada.",
+                    tags = "warning,x",
+                    priority = "urgent"
+                )
+                return@launch
+            }
+
+            addLog("✅ [Importación JSON] Validación de control superada con éxito.")
+            addLog("🔎 [Importación JSON] Consultando IDs de líneas en la tabla SDMX para vincular usuarios...")
+            val livePanelIds = api.getTableIds(context)
+
+            var matchedIdsCount = 0
+            val syncedUsers = newUsers.map { importedUser ->
+                val usernameClean = importedUser.usuario.trim()
+                val liveId = livePanelIds[usernameClean]
+                if (!liveId.isNullOrEmpty()) {
+                    matchedIdsCount++
+                    addLog("🔗 Usuario '$usernameClean' vinculado a ID de panel #$liveId")
+                    importedUser.copy(id = liveId)
+                } else {
+                    importedUser
+                }
+            }
+
+            db.saveUsers(syncedUsers)
+            addLog("📥 [Importación JSON] Base de datos guardada exitosamente (${syncedUsers.size} usuarios cargados, $matchedIdsCount con ID sincronizado).")
+
+            val hours = intervalHours.value.toIntOrNull() ?: 24
+            SdmxAlarmScheduler.scheduleNextExactAlarm(context, hours)
+
+            addLog("🚀 [Importación JSON] Iniciando renovación inmediata de todos los usuarios importados...")
+            notifHelper.showSuccess("Base de datos cargada (${syncedUsers.size} usuarios). Ejecutando renovación de todos los usuarios...", "📥 SDMX: BD Importada")
+
+            // Realizar en este momento la renovación de todos los usuarios importados
+            val renewalResult = SdmxExecutionEngine.executeRenewalCycle(context, "Importación JSON")
+            addLog("🏁 [Importación JSON] Resultado del ciclo de renovación: ${renewalResult.message}")
+
+        } catch (e: Exception) {
+            val exMsg = e.message ?: "Excepción desconocida"
+            addLog("❌ Error durante la importación de JSON: $exMsg")
+            addLog("⚠️ En este momento no se puede cargar la base de datos.")
+            notifHelper.showError("En este momento no se puede cargar la base de datos: $exMsg", "🚨 SDMX: Error de Importación")
+            NtfyManager.sendPushNotification(
+                context = context,
+                title = "🚨 SDMX: Error de Importación",
+                body = "❌ En este momento no se puede cargar la base de datos.\n\nExcepción: $exMsg",
+                tags = "warning,x",
+                priority = "urgent"
+            )
+        } finally {
+            _isLoading.value = false
+        }
     }
 
     fun deleteUser(user: UserModel) = viewModelScope.launch {
         _isLoading.value = true
-        addLog("Eliminando usuario: ${user.usuario}...")
+        val context = getApplication<Application>()
+        val notifHelper = NotificationHelper(context)
+        addLog("🗑️ Solicitud de eliminación para: ${user.usuario}...")
         try {
-            if (user.id.isNotEmpty()) {
-                val sdUser = userSdmx.value
-                val sdPass = passSdmx.value
-                if (!sdUser.isNullOrEmpty() && !sdPass.isNullOrEmpty()) {
-                    if (api.login(getApplication(), sdUser, sdPass)) {
-                        val delOk = api.deleteLine(getApplication(), user.id)
-                        addLog("🗑️ Eliminado del panel: ${user.usuario} (Result: $delOk)")
-                    } else {
-                        addLog("⚠️ No se pudo iniciar sesión para borrar del panel.")
-                    }
-                }
-            }
+            val sdUser = userSdmx.value?.trim() ?: ""
+            val sdPass = passSdmx.value?.trim() ?: ""
             
-            val current = users.value.toMutableList()
-            current.removeAll { it.usuario == user.usuario }
-            db.saveUsers(current)
-            addLog("✅ Usuario ${user.usuario} eliminado.")
+            if (sdUser.isEmpty() || sdPass.isEmpty()) {
+                val errorMsg = "Credenciales de administrador SDMX vacías. No se puede eliminar del panel."
+                addLog("❌ $errorMsg")
+                addLog("⚠️ El usuario '${user.usuario}' NO se eliminó de la app. Configura admin primero.")
+                notifHelper.showError("No se pudo eliminar a '${user.usuario}'. Faltan credenciales de administrador SDMX.", "🚨 SDMX: Fallo al Eliminar")
+                NtfyManager.sendPushNotification(
+                    context = context,
+                    title = "🚨 SDMX: Fallo al eliminar ${user.usuario}",
+                    body = "❌ No se puede eliminar de SDMX: credenciales de administrador no configuradas.\n\n⚠️ El usuario '${user.usuario}' NO fue borrado de la app para que puedas reintentarlo.",
+                    tags = "warning,x",
+                    priority = "urgent"
+                )
+                return@launch
+            }
+
+            val deleteResult = api.deleteUserFromPanel(
+                context = context,
+                adminUser = sdUser,
+                adminPass = sdPass,
+                targetUsername = user.usuario,
+                explicitId = user.id
+            )
+
+            if (deleteResult.isSuccess) {
+                // Remove from local database ONLY after panel deletion succeeds
+                val current = users.value.toMutableList()
+                current.removeAll { it.usuario.equals(user.usuario, ignoreCase = true) || (it.id.isNotEmpty() && it.id == user.id) }
+                db.saveUsers(current)
+
+                val detail = if (deleteResult.getOrNull() == "NOT_FOUND_OR_ALREADY_DELETED") {
+                    "El usuario '${user.usuario}' ya no figuraba en el panel SDMX. Se eliminó de la app con éxito."
+                } else {
+                    "El usuario '${user.usuario}' fue eliminado exitosamente del panel SDMX y de la app."
+                }
+
+                addLog("✅ $detail")
+                notifHelper.showSuccess("Usuario '${user.usuario}' eliminado correctamente del panel y de la app.", "🗑️ SDMX: Usuario Eliminado")
+                NtfyManager.sendPushNotification(
+                    context = context,
+                    title = "🗑️ SDMX: Usuario Eliminado",
+                    body = "✅ $detail",
+                    tags = "wastebasket,white_check_mark",
+                    priority = "default"
+                )
+            } else {
+                val errorReason = deleteResult.exceptionOrNull()?.message ?: "Error desconocido"
+                addLog("❌ Error al eliminar en panel SDMX: $errorReason")
+                addLog("⚠️ El usuario '${user.usuario}' NO se borró de la app para permitir reintentar.")
+                
+                notifHelper.showError("No se pudo borrar '${user.usuario}' del panel: $errorReason. Se mantuvo en la app.", "🚨 SDMX: Error al Borrar")
+                NtfyManager.sendPushNotification(
+                    context = context,
+                    title = "🚨 SDMX: Error al eliminar ${user.usuario}",
+                    body = "❌ No se pudo eliminar a '${user.usuario}' del panel SDMX.\n\n🔍 Causa: $errorReason\n\n📌 El usuario se conservó en la app para que puedas reintentar.",
+                    tags = "warning,rotating_light",
+                    priority = "urgent"
+                )
+            }
         } catch (e: Exception) {
-            addLog("Error al eliminar usuario: ${e.message}")
+            val exMsg = e.message ?: "Excepción desconocida"
+            addLog("❌ Excepción al intentar eliminar usuario: $exMsg")
+            addLog("⚠️ El usuario '${user.usuario}' se mantiene en la app.")
+            notifHelper.showError("Excepción al borrar '${user.usuario}': $exMsg", "🚨 SDMX: Error Inesperado")
+            NtfyManager.sendPushNotification(
+                context = context,
+                title = "🚨 SDMX: Error Inesperado",
+                body = "❌ Excepción al intentar eliminar a '${user.usuario}': $exMsg.\nEl usuario no se borró de la app para reintento.",
+                tags = "warning,x",
+                priority = "urgent"
+            )
         } finally {
             _isLoading.value = false
         }
@@ -286,18 +432,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addLog("🔎 [Depurar] Obteniendo lista de cuentas del panel...")
             val allRows = api.getTableRows(getApplication())
 
-            val testUsers = allRows.filter { (username, _) ->
-                username.trim().startsWith("Test", ignoreCase = true)
+            val testUsers = allRows.filter { (testId, testUsername) ->
+                testUsername.trim().startsWith("Test", ignoreCase = true)
             }
 
             if (testUsers.isEmpty()) {
                 addLog("ℹ️ [Depurar] No se encontraron cuentas que comiencen con 'Test'.")
             } else {
-                val namesList = testUsers.map { it.first }.distinct().joinToString(", ")
+                val namesList = testUsers.map { it.second }.distinct().joinToString(", ")
                 addLog("⚠️ [Depurar] Cuentas 'Test' detectadas (${testUsers.size}): $namesList")
 
                 var deletedCount = 0
-                for ((testUsername, testId) in testUsers) {
+                for ((testId, testUsername) in testUsers) {
                     if (testId.isNotEmpty()) {
                         addLog("🗑️ [Depurar] Eliminando '$testUsername' (ID: $testId)...")
                         val ok = api.deleteLine(getApplication(), testId)
@@ -312,7 +458,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 addLog("🎉 [Depurar] Proceso finalizado. $deletedCount de ${testUsers.size} cuentas 'Test' eliminadas.")
 
-                val testNamesSet = testUsers.map { it.first.trim().lowercase() }.toSet()
+                val testNamesSet = testUsers.map { it.second.trim().lowercase() }.toSet()
                 val currentLocalUsers = users.value.toMutableList()
                 val removed = currentLocalUsers.removeAll { it.usuario.trim().lowercase() in testNamesSet }
                 if (removed) {
