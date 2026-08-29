@@ -187,8 +187,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             if (sdUser.isEmpty() || sdPass.isEmpty()) {
                 val errorMsg = "Credenciales de administrador SDMX no configuradas."
-                addLog("❌ $errorMsg")
-                addLog("⚠️ En este momento no se puede cargar la base de datos.")
+                addLog("❌ [Importación JSON] $errorMsg")
+                addLog("⚠️ [Importación JSON] En este momento no se puede cargar la base de datos.")
                 notifHelper.showError("En este momento no se puede cargar la base de datos (Faltan credenciales de admin SDMX).", "🚨 SDMX: Carga Cancelada")
                 NtfyManager.sendPushNotification(
                     context = context,
@@ -200,14 +200,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            addLog("🔬 [Importación JSON] Ejecutando validación de control (Login -> Creación de prueba -> Borrado de prueba)...")
+            addLog("🔬 [Importación JSON] Ejecutando validación de control en SDMX...")
             val controlResult = api.performControlValidation(context, sdUser, sdPass)
 
             if (controlResult.isFailure) {
                 val failReason = controlResult.exceptionOrNull()?.message ?: "El panel no respondió correctamente"
                 addLog("❌ [Importación JSON] Validación de control fallida: $failReason")
-                addLog("⛔ En este momento no se puede cargar la base de datos.")
-                notifHelper.showError("En este momento no se puede cargar la base de datos (Panel SDMX no superó la prueba de control).", "🚨 SDMX: Carga Cancelada")
+                addLog("⛔ [Importación JSON] En este momento no se puede cargar la base de datos.")
+                notifHelper.showError("En este momento no se puede cargar la base de datos: $failReason", "🚨 SDMX: Carga Cancelada")
                 NtfyManager.sendPushNotification(
                     context = context,
                     title = "🚨 SDMX: Carga de BD Cancelada",
@@ -219,44 +219,129 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             addLog("✅ [Importación JSON] Validación de control superada con éxito.")
-            addLog("🔎 [Importación JSON] Consultando IDs de líneas en la tabla SDMX para vincular usuarios...")
-            val livePanelIds = api.getTableIds(context)
+            addLog("🔎 [Importación JSON] Consultando líneas activas en SDMX para vincular IDs...")
+            val currentTableRows = api.getTableRows(context)
+            val tableIdMap = currentTableRows.associate { it.second.trim().lowercase() to it.first }
 
             var matchedIdsCount = 0
             val syncedUsers = newUsers.map { importedUser ->
-                val usernameClean = importedUser.usuario.trim()
-                val liveId = livePanelIds[usernameClean]
-                if (!liveId.isNullOrEmpty()) {
+                val userKey = importedUser.usuario.trim().lowercase()
+                val liveId = tableIdMap[userKey] ?: importedUser.id.trim()
+                if (tableIdMap.containsKey(userKey)) {
                     matchedIdsCount++
-                    addLog("🔗 Usuario '$usernameClean' vinculado a ID de panel #$liveId")
+                    addLog("🔗 [Importación JSON] '${importedUser.usuario}' vinculada con ID de panel #$liveId")
                     importedUser.copy(id = liveId)
                 } else {
-                    importedUser
+                    addLog("ℹ️ [Importación JSON] '${importedUser.usuario}' no existe aún en SDMX (se creará de cero)")
+                    importedUser.copy(id = "")
                 }
             }
 
+            // Save users locally
             db.saveUsers(syncedUsers)
-            addLog("📥 [Importación JSON] Base de datos guardada exitosamente (${syncedUsers.size} usuarios cargados, $matchedIdsCount con ID sincronizado).")
+            addLog("💾 [Importación JSON] Base de datos guardada (${syncedUsers.size} usuarios cargados, $matchedIdsCount IDs vinculados).")
 
             val hours = intervalHours.value.toIntOrNull() ?: 24
             SdmxAlarmScheduler.scheduleNextExactAlarm(context, hours)
 
-            addLog("🚀 [Importación JSON] Iniciando renovación inmediata de todos los usuarios importados...")
-            notifHelper.showSuccess("Base de datos cargada (${syncedUsers.size} usuarios). Ejecutando renovación de todos los usuarios...", "📥 SDMX: BD Importada")
+            addLog("🚀 [Importación JSON] Iniciando renovación inmediata de todos los ${syncedUsers.size} usuarios importados...")
+            notifHelper.showSuccess("Base de datos cargada. Renovando ${syncedUsers.size} usuarios en SDMX...", "📥 SDMX: BD Importada")
 
-            // Realizar en este momento la renovación de todos los usuarios importados
-            val renewalResult = SdmxExecutionEngine.executeRenewalCycle(context, "Importación JSON")
-            addLog("🏁 [Importación JSON] Resultado del ciclo de renovación: ${renewalResult.message}")
+            var renewedSuccessCount = 0
+            var renewedFailCount = 0
+
+            for ((index, userToRenew) in syncedUsers.withIndex()) {
+                val stepNum = index + 1
+                val targetUsername = userToRenew.usuario.trim()
+                val targetPass = userToRenew.password.ifEmpty { "1234" }
+                val targetExp = userToRenew.vencimiento.ifEmpty {
+                    val cal = Calendar.getInstance().apply { add(Calendar.MONTH, 1) }
+                    SimpleDateFormat("yyyy-MM-dd", Locale.US).format(cal.time)
+                }
+
+                addLog("⚡ [Renovación $stepNum/${syncedUsers.size}] Procesando '$targetUsername'...")
+
+                // 1. Check if user currently has an ID in panel to delete
+                val lineId = if (userToRenew.id.isNotEmpty()) {
+                    userToRenew.id
+                } else {
+                    tableIdMap[targetUsername.lowercase()]
+                }
+
+                if (!lineId.isNullOrEmpty()) {
+                    addLog("🗑️ [$stepNum/${syncedUsers.size}] Eliminando versión anterior de '$targetUsername' (ID #$lineId)...")
+                    val delOk = api.deleteLine(context, lineId)
+                    addLog("   ↳ Resultado borrado: ${if (delOk) "OK" else "No se pudo borrar o ya expiró"}")
+                    delay(800)
+                } else {
+                    addLog("ℹ️ [$stepNum/${syncedUsers.size}] '$targetUsername' no tenía ID previo. Procediendo a crear...")
+                }
+
+                // 2. Create the line
+                addLog("✨ [$stepNum/${syncedUsers.size}] Creando '$targetUsername' en SDMX (vence: $targetExp, adultos: ${userToRenew.adultos})...")
+                val createResult = api.createLine(
+                    context = context,
+                    username = targetUsername,
+                    pass = targetPass,
+                    expDate = targetExp,
+                    adultos = userToRenew.adultos
+                )
+
+                if (createResult.isSuccess) {
+                    renewedSuccessCount++
+                    addLog("✅ [$stepNum/${syncedUsers.size}] '$targetUsername' renovado/creado con éxito en SDMX.")
+                } else {
+                    renewedFailCount++
+                    val errorMsg = createResult.exceptionOrNull()?.message ?: "Error desconocido"
+                    addLog("❌ [$stepNum/${syncedUsers.size}] Error al crear '$targetUsername': $errorMsg")
+                }
+
+                delay(1200)
+            }
+
+            // Fetch fresh table IDs to store final IDs
+            addLog("🔎 [Importación JSON] Consultando nuevos IDs generados en SDMX...")
+            delay(1500)
+            val updatedTableIds = api.getTableIds(context)
+            var finalUpdatedCount = 0
+
+            val finalizedUsers = syncedUsers.map { u ->
+                val newId = updatedTableIds[u.usuario.trim().lowercase()] ?: updatedTableIds[u.usuario.trim()]
+                if (!newId.isNullOrEmpty()) {
+                    finalUpdatedCount++
+                    u.copy(id = newId)
+                } else {
+                    u
+                }
+            }
+
+            db.saveUsers(finalizedUsers)
+            addLog("🎉 [Importación JSON] Proceso finalizado: $renewedSuccessCount renovados exitosamente, $renewedFailCount con error ($finalUpdatedCount IDs asignados).")
+
+            val summaryMsg = "Importación y renovación completada: $renewedSuccessCount de ${syncedUsers.size} cuentas listas en SDMX."
+            notifHelper.showSuccess(summaryMsg, "✅ SDMX: Renovación Completa")
+            
+            try {
+                NtfyManager.sendExecutionReport(
+                    context = context,
+                    isSuccess = (renewedFailCount == 0),
+                    summaryTitle = "Importación y Renovación JSON ($renewedSuccessCount/${syncedUsers.size})",
+                    summaryDetails = summaryMsg,
+                    recentLogs = LogManager.getLogs(context)
+                )
+            } catch (t: Throwable) {
+                t.printStackTrace()
+            }
 
         } catch (e: Exception) {
             val exMsg = e.message ?: "Excepción desconocida"
-            addLog("❌ Error durante la importación de JSON: $exMsg")
-            addLog("⚠️ En este momento no se puede cargar la base de datos.")
-            notifHelper.showError("En este momento no se puede cargar la base de datos: $exMsg", "🚨 SDMX: Error de Importación")
+            addLog("❌ [Importación JSON] Error durante la importación: $exMsg")
+            addLog("⚠️ [Importación JSON] En este momento no se pudo completar la operación.")
+            notifHelper.showError("Error en importación de JSON: $exMsg", "🚨 SDMX: Error de Importación")
             NtfyManager.sendPushNotification(
                 context = context,
                 title = "🚨 SDMX: Error de Importación",
-                body = "❌ En este momento no se puede cargar la base de datos.\n\nExcepción: $exMsg",
+                body = "❌ Excepción durante la importación JSON:\n\n$exMsg",
                 tags = "warning,x",
                 priority = "urgent"
             )

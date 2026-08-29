@@ -377,16 +377,29 @@ class SdmxApiService {
 
         try {
             client.newCall(requestBuilder.build()).execute().use { response ->
+                val bodyStr = response.body?.string() ?: ""
+                
                 if (!response.isSuccessful) {
-                    context?.let { LogManager.addLog(it, "❌ Error al consultar tabla SDMX: HTTP ${response.code}") }
+                    context?.let { LogManager.addLog(it, "❌ [SDMX Tabla] Error HTTP ${response.code} al consultar tabla") }
                     return@withContext emptyList()
                 }
                 
-                val bodyStr = response.body?.string() ?: ""
                 val results = mutableListOf<Pair<String, String>>()
                 
-                val json = JSONObject(bodyStr)
-                val data = json.optJSONArray("data") ?: return@withContext emptyList()
+                val json = try {
+                    JSONObject(bodyStr)
+                } catch (e: Exception) {
+                    val cleanSnippet = bodyStr.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
+                    val disp = if (cleanSnippet.length > 150) cleanSnippet.substring(0, 150) + "..." else cleanSnippet
+                    context?.let { LogManager.addLog(it, "⚠️ [SDMX Tabla] Respuesta no es JSON válido: $disp") }
+                    return@withContext emptyList()
+                }
+
+                val data = json.optJSONArray("data")
+                if (data == null) {
+                    context?.let { LogManager.addLog(it, "ℹ️ [SDMX Tabla] Sin clave 'data' o tabla vacía en panel.") }
+                    return@withContext emptyList()
+                }
                 
                 for (i in 0 until data.length()) {
                     val row = data.getJSONArray(i)
@@ -405,11 +418,12 @@ class SdmxApiService {
                     }
                 }
                 
+                context?.let { LogManager.addLog(it, "📋 [SDMX Tabla] ${results.size} líneas detectadas en panel SDMX.") }
                 return@withContext results
             }
         } catch (e: Exception) {
             e.printStackTrace()
-            context?.let { LogManager.addLog(it, "❌ Error leyendo tabla SDMX: ${e.message}") }
+            context?.let { LogManager.addLog(it, "❌ [SDMX Tabla] Error leyendo datos: ${e.message}") }
             return@withContext emptyList()
         }
     }
@@ -418,7 +432,8 @@ class SdmxApiService {
         val rows = getTableRows(context)
         val map = mutableMapOf<String, String>()
         for (row in rows) {
-            map[row.second] = row.first
+            map[row.second.trim().lowercase()] = row.first
+            map[row.second.trim()] = row.first
         }
         return map
     }
@@ -437,7 +452,7 @@ class SdmxApiService {
 
         context?.let { LogManager.addLog(it, "⏳ [1/2] Eliminando versión anterior de '$username' en SDMX...") }
         val table = getTableRows(context)
-        val match = table.find { it.second.equals(username, ignoreCase = true) }
+        val match = table.find { it.second.equals(username.trim(), ignoreCase = true) }
         
         if (match != null) {
             val id = match.first
@@ -467,41 +482,53 @@ class SdmxApiService {
             return@withContext Result.failure(Exception(err))
         }
 
-        LogManager.addLog(context, "🔍 [Validación Control] 1/3: Autenticando en SDMX como '$user'...")
+        LogManager.addLog(context, "🔐 [Validación Control] Paso 1/3: Autenticando en SDMX como '$user'...")
         val loginOk = login(context, user, pass)
         if (!loginOk) {
-            val err = "Fallo de autenticación en SDMX (usuario/contraseña incorrectos o panel no responde)"
+            val err = "Fallo de inicio de sesión en panel SDMX (usuario/contraseña incorrectos o error HTTP)"
             LogManager.addLog(context, "❌ [Validación Control] $err")
             return@withContext Result.failure(Exception(err))
         }
 
-        val testUsername = "Test_Ctrl_${(1000..9999).random()}"
-        val testPassword = "pwd${(1000..9999).random()}"
+        // Generate purely alphanumeric test username (no underscores, standard IPTV reseller compatibility)
+        val randSuffix = (100000..999999).random()
+        val testUsername = "Test$randSuffix"
+        val testPassword = "pwd$randSuffix"
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val cal = Calendar.getInstance().apply { add(Calendar.MONTH, 1) }
         val expDate = sdf.format(cal.time)
 
-        LogManager.addLog(context, "🧪 [Validación Control] 2/3: Creando línea de prueba temporal '$testUsername'...")
+        LogManager.addLog(context, "🧪 [Validación Control] Paso 2/3: Creando usuario de prueba temporal '$testUsername'...")
         val createResult = createLine(context, testUsername, testPassword, expDate, adultos = false)
         if (createResult.isFailure) {
             val err = createResult.exceptionOrNull()?.message ?: "Panel rechazó la creación de prueba"
-            LogManager.addLog(context, "❌ [Validación Control] Falló creación de prueba: $err")
+            LogManager.addLog(context, "❌ [Validación Control] Falló creación del usuario de prueba '$testUsername': $err")
             return@withContext Result.failure(Exception("Fallo al crear usuario de prueba: $err"))
         }
 
-        kotlinx.coroutines.delay(1000)
+        LogManager.addLog(context, "⏳ [Validación Control] Esperando sincronización del panel...")
+        kotlinx.coroutines.delay(1500)
 
-        LogManager.addLog(context, "🧹 [Validación Control] 3/3: Verificando y eliminando línea de prueba '$testUsername'...")
-        val rows = getTableRows(context)
-        val testMatch = rows.find { it.second.equals(testUsername, ignoreCase = true) }
+        LogManager.addLog(context, "🔎 [Validación Control] Paso 3/3: Localizando ID de '$testUsername' en la tabla SDMX...")
+        var rows = getTableRows(context)
+        var testMatch = rows.find { it.second.equals(testUsername, ignoreCase = true) }
+        
+        if (testMatch == null) {
+            // Give 1 extra second retry in case of database replica delay
+            kotlinx.coroutines.delay(1200)
+            rows = getTableRows(context)
+            testMatch = rows.find { it.second.equals(testUsername, ignoreCase = true) }
+        }
+
         val testId = testMatch?.first
 
         if (testId.isNullOrEmpty()) {
-            val err = "No se localizó el ID del usuario de prueba '$testUsername' en la tabla SDMX"
+            val err = "No se pudo localizar el ID del usuario de prueba '$testUsername' en la tabla SDMX (detectadas ${rows.size} líneas)"
             LogManager.addLog(context, "⚠️ [Validación Control] $err")
             return@withContext Result.failure(Exception(err))
         }
 
+        LogManager.addLog(context, "🗑️ [Validación Control] Borrando usuario de prueba '$testUsername' (ID #$testId)...")
         val deleteOk = deleteLine(context, testId)
         if (!deleteOk) {
             val err = "El panel SDMX no pudo eliminar el usuario de prueba #$testId"
@@ -509,7 +536,7 @@ class SdmxApiService {
             return@withContext Result.failure(Exception(err))
         }
 
-        LogManager.addLog(context, "✅ [Validación Control] Prueba superada: Login, Creación y Borrado funcionan perfectamente.")
+        LogManager.addLog(context, "✅ [Validación Control] Prueba de control SUPERADA: Login OK, Creación OK, Detección de ID OK y Borrado OK.")
         return@withContext Result.success("CONTROL_OK")
     }
 
