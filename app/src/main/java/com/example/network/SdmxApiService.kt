@@ -482,7 +482,7 @@ class SdmxApiService {
             return@withContext Result.failure(Exception(err))
         }
 
-        LogManager.addLog(context, "🔐 [Validación Control] Paso 1/3: Autenticando en SDMX como '$user'...")
+        LogManager.addLog(context, "🔐 [Validación Control] Paso 1/2: Autenticando en SDMX como '$user'...")
         val loginOk = login(context, user, pass)
         if (!loginOk) {
             val err = "Fallo de inicio de sesión en panel SDMX (usuario/contraseña incorrectos o error HTTP)"
@@ -490,53 +490,10 @@ class SdmxApiService {
             return@withContext Result.failure(Exception(err))
         }
 
-        // Generate purely alphanumeric test username (no underscores, standard IPTV reseller compatibility)
-        val randSuffix = (100000..999999).random()
-        val testUsername = "Test$randSuffix"
-        val testPassword = "pwd$randSuffix"
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-        val cal = Calendar.getInstance().apply { add(Calendar.MONTH, 1) }
-        val expDate = sdf.format(cal.time)
-
-        LogManager.addLog(context, "🧪 [Validación Control] Paso 2/3: Creando usuario de prueba temporal '$testUsername'...")
-        val createResult = createLine(context, testUsername, testPassword, expDate, adultos = false)
-        if (createResult.isFailure) {
-            val err = createResult.exceptionOrNull()?.message ?: "Panel rechazó la creación de prueba"
-            LogManager.addLog(context, "❌ [Validación Control] Falló creación del usuario de prueba '$testUsername': $err")
-            return@withContext Result.failure(Exception("Fallo al crear usuario de prueba: $err"))
-        }
-
-        LogManager.addLog(context, "⏳ [Validación Control] Esperando sincronización del panel...")
-        kotlinx.coroutines.delay(1500)
-
-        LogManager.addLog(context, "🔎 [Validación Control] Paso 3/3: Localizando ID de '$testUsername' en la tabla SDMX...")
-        var rows = getTableRows(context)
-        var testMatch = rows.find { it.second.equals(testUsername, ignoreCase = true) }
-        
-        if (testMatch == null) {
-            // Give 1 extra second retry in case of database replica delay
-            kotlinx.coroutines.delay(1200)
-            rows = getTableRows(context)
-            testMatch = rows.find { it.second.equals(testUsername, ignoreCase = true) }
-        }
-
-        val testId = testMatch?.first
-
-        if (testId.isNullOrEmpty()) {
-            val err = "No se pudo localizar el ID del usuario de prueba '$testUsername' en la tabla SDMX (detectadas ${rows.size} líneas)"
-            LogManager.addLog(context, "⚠️ [Validación Control] $err")
-            return@withContext Result.failure(Exception(err))
-        }
-
-        LogManager.addLog(context, "🗑️ [Validación Control] Borrando usuario de prueba '$testUsername' (ID #$testId)...")
-        val deleteOk = deleteLine(context, testId)
-        if (!deleteOk) {
-            val err = "El panel SDMX no pudo eliminar el usuario de prueba #$testId"
-            LogManager.addLog(context, "❌ [Validación Control] $err")
-            return@withContext Result.failure(Exception(err))
-        }
-
-        LogManager.addLog(context, "✅ [Validación Control] Prueba de control SUPERADA: Login OK, Creación OK, Detección de ID OK y Borrado OK.")
+        LogManager.addLog(context, "🔎 [Validación Control] Paso 2/2: Verificando acceso y lectura de tabla de cuentas...")
+        val rows = getTableRows(context)
+        LogManager.addLog(context, "📋 [Validación Control] Conexión validada exitosamente: ${rows.size} líneas detectadas en panel.")
+        LogManager.addLog(context, "✅ [Validación Control] Verificación superada: Login OK y Acceso a Panel OK.")
         return@withContext Result.success("CONTROL_OK")
     }
 

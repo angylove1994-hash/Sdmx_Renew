@@ -75,12 +75,18 @@ class SdmxForegroundService : Service() {
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
     private lateinit var notificationHelper: NotificationHelper
+    private var commandListener: com.example.link.LinkCommandListener? = null
 
     override fun onCreate() {
         super.onCreate()
         notificationHelper = NotificationHelper(this)
         promoteToForeground("Iniciando servicio de fondo 24/7...")
         startMonitoringLoop()
+
+        // Inicia el listener del enlace con el bot de WhatsApp vía NTFY
+        commandListener = com.example.link.LinkCommandListener(this).apply {
+            start(serviceScope)
+        }
     }
 
     private fun promoteToForeground(statusText: String) {
@@ -140,8 +146,7 @@ class SdmxForegroundService : Service() {
     private fun refreshStatusNotification() {
         try {
             val nextRun = PreferencesManager.getSyncNextRunTime(this)
-            val db = LocalDatabase(this)
-            db.loadData()
+            val db = LocalDatabase.get(this)
             val users = db.users.value
 
             val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
@@ -175,6 +180,8 @@ class SdmxForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        commandListener?.stop()
+        commandListener = null
         serviceJob.cancel()
         super.onDestroy()
     }

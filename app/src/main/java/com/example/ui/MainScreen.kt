@@ -50,9 +50,16 @@ fun MainScreen(viewModel: MainViewModel) {
     val lastExecutionTime by viewModel.lastExecutionTime.collectAsState()
     val nextExecutionTime by viewModel.nextExecutionTime.collectAsState()
     val ntfyTopic by viewModel.ntfyTopic.collectAsState()
+    val ntfyBaseUrl by viewModel.ntfyBaseUrl.collectAsState()
+    val linkEnabled by viewModel.linkEnabled.collectAsState()
+    val linkTopicCmd by viewModel.linkTopicCmd.collectAsState()
+    val linkTopicResp by viewModel.linkTopicResp.collectAsState()
+    val linkSecret by viewModel.linkSecret.collectAsState()
+    val linkToken by viewModel.linkToken.collectAsState()
     val users by viewModel.users.collectAsState()
     val logs by viewModel.logs.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val hasDatabaseError by viewModel.hasDatabaseError.collectAsState()
 
     var showAddDialog by remember { mutableStateOf(false) }
     var userToEdit by remember { mutableStateOf<UserModel?>(null) }
@@ -199,6 +206,41 @@ fun MainScreen(viewModel: MainViewModel) {
                                             color = if (isAggressiveMode) GeoOnSecondaryContainer else GeoOnSurfaceVariant,
                                             fontSize = 9.sp,
                                             fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Database corruption alert
+                        AnimatedVisibility(visible = hasDatabaseError) {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF4A1515)),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Warning,
+                                        contentDescription = "Error de Base de Datos",
+                                        tint = Color(0xFFFF6B6B),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            "⚠️ Base de datos local dañada",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = Color(0xFFFFD2D2)
+                                        )
+                                        Text(
+                                            "Se preservó una copia en 'sdmx_users.json.bak'. Las escrituras vía bot están suspendidas.",
+                                            fontSize = 9.sp,
+                                            color = Color(0xFFFFB4B4)
                                         )
                                     }
                                 }
@@ -390,8 +432,9 @@ fun MainScreen(viewModel: MainViewModel) {
                                         Text("Probar Push", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = GeoPrimary)
                                     }
                                 }
+                                val linkStatusText = if (linkEnabled) " • Bot: 🟢 Activo" else ""
                                 Text(
-                                    "Canal: https://ntfy.sh/$ntfyTopic ✏️ (Toca para cambiar)",
+                                    "Canal: $ntfyBaseUrl/$ntfyTopic$linkStatusText ✏️ (Toca para cambiar)",
                                     fontSize = 10.sp,
                                     fontFamily = FontFamily.Monospace,
                                     color = GeoOnSurfaceVariant,
@@ -774,8 +817,9 @@ fun MainScreen(viewModel: MainViewModel) {
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
+                                val linkStatusMobile = if (linkEnabled) " • Bot 🟢" else ""
                                 Column {
-                                    Text("Push: https://ntfy.sh/$ntfyTopic", fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = GeoOnBackground)
+                                    Text("Push: $ntfyBaseUrl/$ntfyTopic$linkStatusMobile", fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = GeoOnBackground)
                                     Text("Toca para cambiar canal o probar", fontSize = 9.sp, color = GeoPrimary)
                                 }
                             }
@@ -796,6 +840,41 @@ fun MainScreen(viewModel: MainViewModel) {
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    // Database corruption alert (Mobile)
+                    AnimatedVisibility(visible = hasDatabaseError) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF4A1515)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = "Error de Base de Datos",
+                                    tint = Color(0xFFFF6B6B),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        "⚠️ Base de datos local dañada",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        color = Color(0xFFFFD2D2)
+                                    )
+                                    Text(
+                                        "Se preservó una copia en 'sdmx_users.json.bak'. Las escrituras vía bot están suspendidas.",
+                                        fontSize = 9.sp,
+                                        color = Color(0xFFFFB4B4)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     // Actions
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -988,9 +1067,20 @@ fun MainScreen(viewModel: MainViewModel) {
     if (showNtfyTopicDialog) {
         NtfyTopicDialog(
             currentTopic = ntfyTopic,
+            currentBaseUrl = ntfyBaseUrl,
+            currentLinkEnabled = linkEnabled,
+            currentLinkCmd = linkTopicCmd,
+            currentLinkResp = linkTopicResp,
+            currentLinkSecret = linkSecret,
+            currentLinkToken = linkToken,
             onDismissRequest = { showNtfyTopicDialog = false },
-            onSaveTopic = { newTopic -> viewModel.saveNtfyTopic(newTopic) },
-            onTestPush = { viewModel.sendTestNtfyPush() }
+            onSaveAll = { reportTopic, baseUrl, enabled, cmd, resp, secret, token ->
+                viewModel.saveAllNtfyConfig(reportTopic, baseUrl, enabled, cmd, resp, secret, token)
+            },
+            onTestPush = { viewModel.sendTestNtfyPush() },
+            onTestLinkPush = { baseUrl, respTopic, token ->
+                viewModel.sendTestLinkPush(baseUrl, respTopic, token)
+            }
         )
     }
 

@@ -20,6 +20,12 @@ class PreferencesManager(private val context: Context) {
         val KEY_LAST_EXECUTION = longPreferencesKey("last_execution_time")
         val KEY_NEXT_EXECUTION = longPreferencesKey("next_execution_time")
         val KEY_NTFY_TOPIC = stringPreferencesKey("ntfy_topic")
+        val KEY_NTFY_BASE_URL = stringPreferencesKey("ntfy_base_url")
+        val KEY_LINK_ENABLED = booleanPreferencesKey("link_enabled")
+        val KEY_LINK_TOPIC_CMD = stringPreferencesKey("link_topic_cmd")
+        val KEY_LINK_TOPIC_RESP = stringPreferencesKey("link_topic_resp")
+        val KEY_LINK_SECRET = stringPreferencesKey("link_secret")
+        val KEY_LINK_TOKEN = stringPreferencesKey("link_token")
         
         // Fast SharedPreferences fallback for immediate synchronous access in receivers/services
         private const val SYNC_PREFS_NAME = "sdmx_sync_prefs"
@@ -30,7 +36,18 @@ class PreferencesManager(private val context: Context) {
         private const val SYNC_KEY_LAST_RUN = "last_run"
         private const val SYNC_KEY_NEXT_RUN = "next_run"
         private const val SYNC_KEY_NTFY_TOPIC = "ntfy_topic"
+        private const val SYNC_KEY_NTFY_BASE_URL = "ntfy_base_url"
+        private const val SYNC_KEY_LINK_ENABLED = "link_enabled"
+        private const val SYNC_KEY_LINK_TOPIC_CMD = "link_topic_cmd"
+        private const val SYNC_KEY_LINK_TOPIC_RESP = "link_topic_resp"
+        private const val SYNC_KEY_LINK_SECRET = "link_secret"
+        private const val SYNC_KEY_LINK_TOKEN = "link_token"
+
         const val DEFAULT_NTFY_TOPIC = "Gato_Negro_Reportes"
+        const val DEFAULT_NTFY_BASE_URL = "https://ntfy.sh"
+        const val DEFAULT_LINK_ENABLED = false
+        const val DEFAULT_LINK_TOPIC_CMD = "SDMX_RENEW_CMD"
+        const val DEFAULT_LINK_TOPIC_RESP = "SDMX_RENEW_RESP"
 
         fun getNtfyTopic(context: Context): String {
             val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
@@ -40,6 +57,62 @@ class PreferencesManager(private val context: Context) {
         fun setSyncNtfyTopic(context: Context, topic: String) {
             val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
             sp.edit().putString(SYNC_KEY_NTFY_TOPIC, topic.ifEmpty { DEFAULT_NTFY_TOPIC }).apply()
+        }
+
+        fun getNtfyBaseUrl(context: Context): String {
+            val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
+            val url = sp.getString(SYNC_KEY_NTFY_BASE_URL, DEFAULT_NTFY_BASE_URL) ?: DEFAULT_NTFY_BASE_URL
+            return if (url.isBlank()) DEFAULT_NTFY_BASE_URL else url.trim().trimEnd('/')
+        }
+
+        fun isLinkEnabled(context: Context): Boolean {
+            val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
+            return sp.getBoolean(SYNC_KEY_LINK_ENABLED, DEFAULT_LINK_ENABLED)
+        }
+
+        fun getLinkTopicCmd(context: Context): String {
+            val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
+            val cmd = sp.getString(SYNC_KEY_LINK_TOPIC_CMD, DEFAULT_LINK_TOPIC_CMD)
+            return if (cmd.isNullOrBlank()) DEFAULT_LINK_TOPIC_CMD else cmd.trim()
+        }
+
+        fun getLinkTopicResp(context: Context): String {
+            val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
+            val resp = sp.getString(SYNC_KEY_LINK_TOPIC_RESP, DEFAULT_LINK_TOPIC_RESP)
+            return if (resp.isNullOrBlank()) DEFAULT_LINK_TOPIC_RESP else resp.trim()
+        }
+
+        fun getLinkSecret(context: Context): String {
+            val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
+            return sp.getString(SYNC_KEY_LINK_SECRET, "") ?: ""
+        }
+
+        fun getLinkToken(context: Context): String {
+            val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
+            return sp.getString(SYNC_KEY_LINK_TOKEN, "") ?: ""
+        }
+
+        fun setSyncLinkConfig(
+            context: Context,
+            enabled: Boolean,
+            baseUrl: String,
+            topicCmd: String,
+            topicResp: String,
+            secret: String,
+            token: String
+        ) {
+            val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
+            val cleanBaseUrl = baseUrl.trim().ifEmpty { DEFAULT_NTFY_BASE_URL }.trimEnd('/')
+            val cleanCmd = topicCmd.trim().ifEmpty { DEFAULT_LINK_TOPIC_CMD }
+            val cleanResp = topicResp.trim().ifEmpty { DEFAULT_LINK_TOPIC_RESP }
+            sp.edit()
+                .putBoolean(SYNC_KEY_LINK_ENABLED, enabled)
+                .putString(SYNC_KEY_NTFY_BASE_URL, cleanBaseUrl)
+                .putString(SYNC_KEY_LINK_TOPIC_CMD, cleanCmd)
+                .putString(SYNC_KEY_LINK_TOPIC_RESP, cleanResp)
+                .putString(SYNC_KEY_LINK_SECRET, secret.trim())
+                .putString(SYNC_KEY_LINK_TOKEN, token.trim())
+                .apply()
         }
 
         fun getSyncCredentials(context: Context): Pair<String, String> {
@@ -82,6 +155,12 @@ class PreferencesManager(private val context: Context) {
     val lastExecutionTime: Flow<Long> = context.dataStore.data.map { it[KEY_LAST_EXECUTION] ?: 0L }
     val nextExecutionTime: Flow<Long> = context.dataStore.data.map { it[KEY_NEXT_EXECUTION] ?: 0L }
     val ntfyTopic: Flow<String> = context.dataStore.data.map { it[KEY_NTFY_TOPIC] ?: DEFAULT_NTFY_TOPIC }
+    val ntfyBaseUrl: Flow<String> = context.dataStore.data.map { it[KEY_NTFY_BASE_URL] ?: DEFAULT_NTFY_BASE_URL }
+    val linkEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_LINK_ENABLED] ?: DEFAULT_LINK_ENABLED }
+    val linkTopicCmd: Flow<String> = context.dataStore.data.map { it[KEY_LINK_TOPIC_CMD] ?: DEFAULT_LINK_TOPIC_CMD }
+    val linkTopicResp: Flow<String> = context.dataStore.data.map { it[KEY_LINK_TOPIC_RESP] ?: DEFAULT_LINK_TOPIC_RESP }
+    val linkSecret: Flow<String> = context.dataStore.data.map { it[KEY_LINK_SECRET] ?: "" }
+    val linkToken: Flow<String> = context.dataStore.data.map { it[KEY_LINK_TOKEN] ?: "" }
 
     suspend fun saveNtfyTopic(topic: String) {
         val cleanTopic = topic.trim().ifEmpty { DEFAULT_NTFY_TOPIC }
@@ -89,6 +168,48 @@ class PreferencesManager(private val context: Context) {
             it[KEY_NTFY_TOPIC] = cleanTopic
         }
         setSyncNtfyTopic(context, cleanTopic)
+    }
+
+    suspend fun saveNtfyBaseUrl(baseUrl: String) {
+        val cleanUrl = baseUrl.trim().ifEmpty { DEFAULT_NTFY_BASE_URL }.trimEnd('/')
+        context.dataStore.edit {
+            it[KEY_NTFY_BASE_URL] = cleanUrl
+        }
+        val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
+        sp.edit().putString(SYNC_KEY_NTFY_BASE_URL, cleanUrl).apply()
+    }
+
+    suspend fun setLinkEnabled(enabled: Boolean) {
+        context.dataStore.edit {
+            it[KEY_LINK_ENABLED] = enabled
+        }
+        val sp = context.getSharedPreferences(SYNC_PREFS_NAME, Context.MODE_PRIVATE)
+        sp.edit().putBoolean(SYNC_KEY_LINK_ENABLED, enabled).apply()
+    }
+
+    suspend fun saveLinkConfig(
+        enabled: Boolean,
+        baseUrl: String,
+        topicCmd: String,
+        topicResp: String,
+        secret: String,
+        token: String
+    ) {
+        val cleanBaseUrl = baseUrl.trim().ifEmpty { DEFAULT_NTFY_BASE_URL }.trimEnd('/')
+        val cleanCmd = topicCmd.trim().ifEmpty { DEFAULT_LINK_TOPIC_CMD }
+        val cleanResp = topicResp.trim().ifEmpty { DEFAULT_LINK_TOPIC_RESP }
+        val cleanSecret = secret.trim()
+        val cleanToken = token.trim()
+
+        context.dataStore.edit {
+            it[KEY_LINK_ENABLED] = enabled
+            it[KEY_NTFY_BASE_URL] = cleanBaseUrl
+            it[KEY_LINK_TOPIC_CMD] = cleanCmd
+            it[KEY_LINK_TOPIC_RESP] = cleanResp
+            it[KEY_LINK_SECRET] = cleanSecret
+            it[KEY_LINK_TOKEN] = cleanToken
+        }
+        setSyncLinkConfig(context, enabled, cleanBaseUrl, cleanCmd, cleanResp, cleanSecret, cleanToken)
     }
 
     suspend fun saveCredentials(user: String, pass: String) {

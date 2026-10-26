@@ -25,6 +25,63 @@ object NtfyManager {
         .writeTimeout(15, TimeUnit.SECONDS)
         .build()
 
+    suspend fun publish(
+        context: Context,
+        topic: String,
+        message: String,
+        title: String? = null,
+        priority: Int = 3
+    ): Boolean = withContext(Dispatchers.IO) {
+        val cleanTopic = topic.trim()
+        if (cleanTopic.isEmpty()) {
+            LogManager.addLog(context, "⚠️ [Ntfy] Intento de publicar en tópico vacío")
+            return@withContext false
+        }
+        try {
+            val baseUrl = PreferencesManager.getNtfyBaseUrl(context).ifEmpty { BASE_URL }
+            val token = PreferencesManager.getLinkToken(context)
+
+            val jsonPayload = JSONObject().apply {
+                put("topic", cleanTopic)
+                put("message", message)
+                if (!title.isNullOrBlank()) {
+                    put("title", title)
+                }
+                put("priority", priority.coerceIn(1, 5))
+            }
+
+            val requestBody = jsonPayload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+
+            val reqBuilder = Request.Builder()
+                .url(baseUrl)
+                .post(requestBody)
+                .addHeader("Accept", "application/json")
+
+            if (token.isNotBlank()) {
+                reqBuilder.addHeader("Authorization", "Bearer $token")
+            }
+
+            val request = reqBuilder.build()
+
+            client.newCall(request).execute().use { response ->
+                val responseStr = try { response.peekBody(1024).string() } catch (e: Exception) { "" }
+                if (response.isSuccessful) {
+                    Log.d(TAG, "Ntfy publish to $cleanTopic successful. Response: $responseStr")
+                    true
+                } else {
+                    val code = response.code
+                    Log.e(TAG, "Failed to publish to $cleanTopic. HTTP $code. Response: $responseStr")
+                    LogManager.addLog(context, "⚠️ [Ntfy] Error HTTP $code al publicar en '$cleanTopic': $responseStr")
+                    false
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception publishing to Ntfy: ${e.message}", e)
+            LogManager.addLog(context, "❌ [Ntfy] Falló publicación a '$cleanTopic': ${e.message}")
+            false
+        }
+    }
+
     suspend fun sendPushNotification(
         context: Context,
         title: String,
@@ -34,6 +91,8 @@ object NtfyManager {
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             val topic = PreferencesManager.getNtfyTopic(context).ifEmpty { DEFAULT_TOPIC }
+            val baseUrl = PreferencesManager.getNtfyBaseUrl(context).ifEmpty { BASE_URL }
+            val token = PreferencesManager.getLinkToken(context)
             
             // Map priority string to ntfy integer priority (1..5)
             val priorityInt = when (priority.lowercase()) {
@@ -61,11 +120,16 @@ object NtfyManager {
 
             val requestBody = jsonPayload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
 
-            val request = Request.Builder()
-                .url(BASE_URL)
+            val reqBuilder = Request.Builder()
+                .url(baseUrl)
                 .post(requestBody)
                 .addHeader("Accept", "application/json")
-                .build()
+
+            if (token.isNotBlank()) {
+                reqBuilder.addHeader("Authorization", "Bearer $token")
+            }
+
+            val request = reqBuilder.build()
 
             client.newCall(request).execute().use { response ->
                 val responseStr = try { response.peekBody(1024).string() } catch (e: Exception) { "" }
@@ -75,13 +139,13 @@ object NtfyManager {
                 } else {
                     val code = response.code
                     Log.e(TAG, "Failed to send Ntfy push. HTTP $code. Response: $responseStr")
-                    LogManager.addLog(context, "⚠️ [Ntfy.sh] Error HTTP $code al enviar push a '$topic': $responseStr")
+                    LogManager.addLog(context, "⚠️ [Ntfy] Error HTTP $code al enviar push a '$topic': $responseStr")
                     false
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Exception sending Ntfy push: ${e.message}", e)
-            LogManager.addLog(context, "❌ [Ntfy.sh] Falló envío de push: ${e.message}")
+            LogManager.addLog(context, "❌ [Ntfy] Falló envío de push: ${e.message}")
             false
         }
     }

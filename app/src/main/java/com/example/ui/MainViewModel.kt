@@ -3,6 +3,7 @@ package com.example.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.AppLocks
 import com.example.data.LocalDatabase
 import com.example.data.LogManager
 import com.example.data.PreferencesManager
@@ -19,12 +20,13 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import java.text.SimpleDateFormat
 import java.util.*
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = PreferencesManager(application)
-    private val db = LocalDatabase(application)
+    private val db = LocalDatabase.get(application)
     private val api = SdmxApiService()
 
     val userSdmx = prefs.userSdmx.stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -34,8 +36,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val lastExecutionTime = prefs.lastExecutionTime.stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
     val nextExecutionTime = prefs.nextExecutionTime.stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
     val ntfyTopic = prefs.ntfyTopic.stateIn(viewModelScope, SharingStarted.Eagerly, PreferencesManager.DEFAULT_NTFY_TOPIC)
+    val ntfyBaseUrl = prefs.ntfyBaseUrl.stateIn(viewModelScope, SharingStarted.Eagerly, PreferencesManager.DEFAULT_NTFY_BASE_URL)
+    val linkEnabled = prefs.linkEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, PreferencesManager.DEFAULT_LINK_ENABLED)
+    val linkTopicCmd = prefs.linkTopicCmd.stateIn(viewModelScope, SharingStarted.Eagerly, PreferencesManager.DEFAULT_LINK_TOPIC_CMD)
+    val linkTopicResp = prefs.linkTopicResp.stateIn(viewModelScope, SharingStarted.Eagerly, PreferencesManager.DEFAULT_LINK_TOPIC_RESP)
+    val linkSecret = prefs.linkSecret.stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    val linkToken = prefs.linkToken.stateIn(viewModelScope, SharingStarted.Eagerly, "")
     
     val users = db.users
+    val hasDatabaseError = db.hasLoadError
 
     private val _logs = MutableStateFlow<List<String>>(emptyList())
     val logs: StateFlow<List<String>> = _logs
@@ -157,7 +166,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 vencimiento = expDateStr,
                 adultos = adultos
             )
-            db.addUser(newUser)
+            AppLocks.data.withLock {
+                db.addUser(newUser)
+            }
             addLog("✅ Creado: $username | id: $newId | vence: $expDateStr | adultos: $adultos")
             
             // Refresh service notification
@@ -171,11 +182,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     fun replaceUsers(newUsers: List<UserModel>) = viewModelScope.launch {
+        if (_isLoading.value) return@launch
         _isLoading.value = true
         val context = getApplication<Application>()
         val notifHelper = NotificationHelper(context)
 
-        addLog("📥 [Importación JSON] Iniciando verificación y carga de ${newUsers.size} usuarios...")
+        addLog("📥 [Cargar Base] =========================================")
+        addLog("📥 [Cargar Base] Iniciando importación y carga de ${newUsers.size} cuentas...")
         try {
             var sdUser = userSdmx.value?.trim() ?: ""
             var sdPass = passSdmx.value?.trim() ?: ""
@@ -186,10 +199,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (sdUser.isEmpty() || sdPass.isEmpty()) {
-                val errorMsg = "Credenciales de administrador SDMX no configuradas."
-                addLog("❌ [Importación JSON] $errorMsg")
-                addLog("⚠️ [Importación JSON] En este momento no se puede cargar la base de datos.")
-                notifHelper.showError("En este momento no se puede cargar la base de datos (Faltan credenciales de admin SDMX).", "🚨 SDMX: Carga Cancelada")
+                val errorMsg = "Credenciales de administrador SDMX no configuradas en Ajustes."
+                addLog("❌ [Cargar Base] $errorMsg")
+                notifHelper.showError("Credenciales de administrador SDMX no configuradas.", "🚨 SDMX: Carga Cancelada")
                 NtfyManager.sendPushNotification(
                     context = context,
                     title = "🚨 SDMX: Carga de BD Cancelada",
@@ -200,55 +212,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            addLog("🔬 [Importación JSON] Ejecutando validación de control en SDMX...")
-            val controlResult = api.performControlValidation(context, sdUser, sdPass)
-
-            if (controlResult.isFailure) {
-                val failReason = controlResult.exceptionOrNull()?.message ?: "El panel no respondió correctamente"
-                addLog("❌ [Importación JSON] Validación de control fallida: $failReason")
-                addLog("⛔ [Importación JSON] En este momento no se puede cargar la base de datos.")
-                notifHelper.showError("En este momento no se puede cargar la base de datos: $failReason", "🚨 SDMX: Carga Cancelada")
+            // Paso 1: Autenticación en el panel SDMX (igual que en depurar y en agregar usuario)
+            addLog("🔐 [Cargar Base] Paso 1/3: Autenticando en el panel SDMX con usuario '$sdUser'...")
+            val loginOk = api.login(context, sdUser, sdPass)
+            if (!loginOk) {
+                val errorMsg = "Fallo de inicio de sesión en panel SDMX. Revisa usuario y contraseña."
+                addLog("❌ [Cargar Base] $errorMsg")
+                notifHelper.showError("No se pudo iniciar sesión en el panel SDMX.", "🚨 SDMX: Falló Login")
                 NtfyManager.sendPushNotification(
                     context = context,
-                    title = "🚨 SDMX: Carga de BD Cancelada",
-                    body = "❌ En este momento no se puede cargar la base de datos.\n\n🔍 Causa: La validación de control del panel SDMX falló ($failReason).\n\n📌 La base de datos no fue modificada.",
+                    title = "🚨 SDMX: Error de Login",
+                    body = "❌ Fallo de inicio de sesión en el panel SDMX para '$sdUser'. La base de datos no fue modificada.",
                     tags = "warning,x",
                     priority = "urgent"
                 )
                 return@launch
             }
+            addLog("✅ [Cargar Base] Sesión iniciada con éxito en el panel SDMX.")
 
-            addLog("✅ [Importación JSON] Validación de control superada con éxito.")
-            addLog("🔎 [Importación JSON] Consultando líneas activas en SDMX para vincular IDs...")
+            // Paso 2: Consultar la tabla de cuentas activas en el panel para vincular IDs (igual que en depurar)
+            addLog("🔎 [Cargar Base] Paso 2/3: Consultando lista de cuentas en el panel para vincular IDs...")
             val currentTableRows = api.getTableRows(context)
+            addLog("📋 [Cargar Base] Se detectaron ${currentTableRows.size} cuentas en el panel SDMX.")
             val tableIdMap = currentTableRows.associate { it.second.trim().lowercase() to it.first }
 
             var matchedIdsCount = 0
             val syncedUsers = newUsers.map { importedUser ->
-                val userKey = importedUser.usuario.trim().lowercase()
-                val liveId = tableIdMap[userKey] ?: importedUser.id.trim()
+                val targetUsername = importedUser.usuario.trim()
+                val userKey = targetUsername.lowercase()
+                val liveId = tableIdMap[userKey] ?: (if (importedUser.id.isNotBlank()) importedUser.id.trim() else "")
                 if (tableIdMap.containsKey(userKey)) {
                     matchedIdsCount++
-                    addLog("🔗 [Importación JSON] '${importedUser.usuario}' vinculada con ID de panel #$liveId")
+                    addLog("🔗 [Cargar Base] '$targetUsername' vinculada con ID de panel #$liveId")
+                    importedUser.copy(id = liveId)
+                } else if (liveId.isNotEmpty()) {
+                    addLog("ℹ️ [Cargar Base] '$targetUsername' conserva ID previo #$liveId (no encontrada en tabla)")
                     importedUser.copy(id = liveId)
                 } else {
-                    addLog("ℹ️ [Importación JSON] '${importedUser.usuario}' no existe aún en SDMX (se creará de cero)")
+                    addLog("ℹ️ [Cargar Base] '$targetUsername' no existe actualmente en el panel (se creará de cero)")
                     importedUser.copy(id = "")
                 }
             }
 
-            // Save users locally
-            db.saveUsers(syncedUsers)
-            addLog("💾 [Importación JSON] Base de datos guardada (${syncedUsers.size} usuarios cargados, $matchedIdsCount IDs vinculados).")
+            // Guardar inmediatamente en la base de datos local protegida con AppLocks.data
+            AppLocks.data.withLock {
+                db.saveUsers(syncedUsers)
+            }
+            addLog("💾 [Cargar Base] Base de datos local guardada: ${syncedUsers.size} cuentas listas ($matchedIdsCount con ID de panel).")
 
             val hours = intervalHours.value.toIntOrNull() ?: 24
             SdmxAlarmScheduler.scheduleNextExactAlarm(context, hours)
 
-            addLog("🚀 [Importación JSON] Iniciando renovación inmediata de todos los ${syncedUsers.size} usuarios importados...")
+            // Paso 3: Proceso de eliminación de versión previa y recreación con vencimiento
+            addLog("🚀 [Cargar Base] Paso 3/3: Recreando y sincronizando las ${syncedUsers.size} cuentas en SDMX...")
             notifHelper.showSuccess("Base de datos cargada. Renovando ${syncedUsers.size} usuarios en SDMX...", "📥 SDMX: BD Importada")
 
             var renewedSuccessCount = 0
             var renewedFailCount = 0
+            val updatedUserList = syncedUsers.toMutableList()
 
             for ((index, userToRenew) in syncedUsers.withIndex()) {
                 val stepNum = index + 1
@@ -259,25 +280,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     SimpleDateFormat("yyyy-MM-dd", Locale.US).format(cal.time)
                 }
 
-                addLog("⚡ [Renovación $stepNum/${syncedUsers.size}] Procesando '$targetUsername'...")
+                addLog("⚡ [Proceso $stepNum/${syncedUsers.size}] Gestionando '$targetUsername'...")
 
-                // 1. Check if user currently has an ID in panel to delete
-                val lineId = if (userToRenew.id.isNotEmpty()) {
-                    userToRenew.id
-                } else {
-                    tableIdMap[targetUsername.lowercase()]
-                }
-
+                // 3.1 Eliminar versión previa si tiene ID
+                val lineId = if (userToRenew.id.isNotEmpty()) userToRenew.id else tableIdMap[targetUsername.lowercase()]
                 if (!lineId.isNullOrEmpty()) {
                     addLog("🗑️ [$stepNum/${syncedUsers.size}] Eliminando versión anterior de '$targetUsername' (ID #$lineId)...")
                     val delOk = api.deleteLine(context, lineId)
-                    addLog("   ↳ Resultado borrado: ${if (delOk) "OK" else "No se pudo borrar o ya expiró"}")
+                    if (delOk) {
+                        addLog("   ↳ ✅ Línea previa #$lineId eliminada correctamente de SDMX.")
+                    } else {
+                        addLog("   ↳ ⚠️ No se pudo eliminar línea #$lineId (puede haber sido borrada o expirada).")
+                    }
                     delay(800)
                 } else {
                     addLog("ℹ️ [$stepNum/${syncedUsers.size}] '$targetUsername' no tenía ID previo. Procediendo a crear...")
                 }
 
-                // 2. Create the line
+                // 3.2 Crear línea nueva
                 addLog("✨ [$stepNum/${syncedUsers.size}] Creando '$targetUsername' en SDMX (vence: $targetExp, adultos: ${userToRenew.adultos})...")
                 val createResult = api.createLine(
                     context = context,
@@ -289,59 +309,76 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (createResult.isSuccess) {
                     renewedSuccessCount++
-                    addLog("✅ [$stepNum/${syncedUsers.size}] '$targetUsername' renovado/creado con éxito en SDMX.")
+                    addLog("   ↳ ✅ '$targetUsername' creado/renovado con éxito en SDMX.")
+                    
+                    // Pausa para que el servidor indexe la línea
+                    delay(1200)
+                    val freshRows = api.getTableRows(context)
+                    val newMatch = freshRows.find { it.second.trim().equals(targetUsername, ignoreCase = true) }
+                    val newId = newMatch?.first ?: ""
+                    if (newId.isNotEmpty()) {
+                        addLog("   ↳ 🆔 Nuevo ID asignado: #$newId")
+                        val idx = updatedUserList.indexOfFirst { it.usuario.equals(targetUsername, ignoreCase = true) }
+                        if (idx != -1) {
+                            updatedUserList[idx] = updatedUserList[idx].copy(id = newId)
+                            AppLocks.data.withLock {
+                                db.saveUsers(updatedUserList)
+                            }
+                        }
+                    } else {
+                        addLog("   ↳ ⚠️ Nuevo ID para '$targetUsername' aún no visible en tabla (se actualizará al final).")
+                    }
                 } else {
                     renewedFailCount++
                     val errorMsg = createResult.exceptionOrNull()?.message ?: "Error desconocido"
-                    addLog("❌ [$stepNum/${syncedUsers.size}] Error al crear '$targetUsername': $errorMsg")
+                    addLog("   ↳ ❌ Error al crear '$targetUsername': $errorMsg")
                 }
 
-                delay(1200)
+                delay(1000)
             }
 
-            // Fetch fresh table IDs to store final IDs
-            addLog("🔎 [Importación JSON] Consultando nuevos IDs generados en SDMX...")
-            delay(1500)
-            val updatedTableIds = api.getTableIds(context)
-            var finalUpdatedCount = 0
-
-            val finalizedUsers = syncedUsers.map { u ->
-                val newId = updatedTableIds[u.usuario.trim().lowercase()] ?: updatedTableIds[u.usuario.trim()]
+            // Verificación final de IDs en SDMX para asignar los que faltaron
+            addLog("🔎 [Cargar Base] Verificación final de IDs en SDMX...")
+            val finalIds = api.getTableIds(context)
+            var finalAssignedCount = 0
+            val finalizedUsers = updatedUserList.map { u ->
+                val newId = finalIds[u.usuario.trim().lowercase()] ?: finalIds[u.usuario.trim()]
                 if (!newId.isNullOrEmpty()) {
-                    finalUpdatedCount++
+                    finalAssignedCount++
                     u.copy(id = newId)
                 } else {
                     u
                 }
             }
 
-            db.saveUsers(finalizedUsers)
-            addLog("🎉 [Importación JSON] Proceso finalizado: $renewedSuccessCount renovados exitosamente, $renewedFailCount con error ($finalUpdatedCount IDs asignados).")
+            AppLocks.data.withLock {
+                db.saveUsers(finalizedUsers)
+            }
+            addLog("🎉 [Cargar Base] Proceso completado: $renewedSuccessCount cuentas creadas/renovadas con éxito, $renewedFailCount con error ($finalAssignedCount IDs asignados).")
+            addLog("📥 [Cargar Base] =========================================")
 
-            val summaryMsg = "Importación y renovación completada: $renewedSuccessCount de ${syncedUsers.size} cuentas listas en SDMX."
-            notifHelper.showSuccess(summaryMsg, "✅ SDMX: Renovación Completa")
-            
+            val summaryMsg = "Carga y renovación completada: $renewedSuccessCount de ${syncedUsers.size} cuentas listas en SDMX."
+            notifHelper.showSuccess(summaryMsg, "✅ SDMX: Carga Completa")
+
             try {
                 NtfyManager.sendExecutionReport(
                     context = context,
                     isSuccess = (renewedFailCount == 0),
-                    summaryTitle = "Importación y Renovación JSON ($renewedSuccessCount/${syncedUsers.size})",
+                    summaryTitle = "Carga y Renovación JSON ($renewedSuccessCount/${syncedUsers.size})",
                     summaryDetails = summaryMsg,
                     recentLogs = LogManager.getLogs(context)
                 )
             } catch (t: Throwable) {
                 t.printStackTrace()
             }
-
         } catch (e: Exception) {
             val exMsg = e.message ?: "Excepción desconocida"
-            addLog("❌ [Importación JSON] Error durante la importación: $exMsg")
-            addLog("⚠️ [Importación JSON] En este momento no se pudo completar la operación.")
-            notifHelper.showError("Error en importación de JSON: $exMsg", "🚨 SDMX: Error de Importación")
+            addLog("❌ [Cargar Base] Error durante la carga: $exMsg")
+            notifHelper.showError("Error al cargar BD: $exMsg", "🚨 SDMX: Error de Carga")
             NtfyManager.sendPushNotification(
                 context = context,
                 title = "🚨 SDMX: Error de Importación",
-                body = "❌ Excepción durante la importación JSON:\n\n$exMsg",
+                body = "❌ Excepción durante la carga JSON:\n\n$exMsg",
                 tags = "warning,x",
                 priority = "urgent"
             )
@@ -384,9 +421,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             if (deleteResult.isSuccess) {
                 // Remove from local database ONLY after panel deletion succeeds
-                val current = users.value.toMutableList()
-                current.removeAll { it.usuario.equals(user.usuario, ignoreCase = true) || (it.id.isNotEmpty() && it.id == user.id) }
-                db.saveUsers(current)
+                AppLocks.data.withLock {
+                    val current = users.value.toMutableList()
+                    current.removeAll { it.usuario.equals(user.usuario, ignoreCase = true) || (it.id.isNotEmpty() && it.id == user.id) }
+                    db.saveUsers(current)
+                }
 
                 val detail = if (deleteResult.getOrNull() == "NOT_FOUND_OR_ALREADY_DELETED") {
                     "El usuario '${user.usuario}' ya no figuraba en el panel SDMX. Se eliminó de la app con éxito."
@@ -460,7 +499,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         } else {
                             current.add(finalUser)
                         }
-                        db.saveUsers(current)
+                        AppLocks.data.withLock {
+                            db.saveUsers(current)
+                        }
                         addLog("✅ Modificado: ${newUser.usuario} | nuevo id: $newId | vence: ${newUser.vencimiento} | adultos: ${newUser.adultos}")
                     } else {
                         val err = createOk.exceptionOrNull()?.message ?: "Error desconocido"
@@ -470,7 +511,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         if (idx != -1) {
                             current[idx] = newUser
                         }
-                        db.saveUsers(current)
+                        AppLocks.data.withLock {
+                            db.saveUsers(current)
+                        }
                     }
                 } else {
                     addLog("⚠️ Login fallido. Guardado solo localmente.")
@@ -479,7 +522,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (idx != -1) {
                         current[idx] = newUser
                     }
-                    db.saveUsers(current)
+                    AppLocks.data.withLock {
+                        db.saveUsers(current)
+                    }
                 }
             } else {
                 addLog("⚠️ Credenciales no configuradas. Guardado solo localmente.")
@@ -488,7 +533,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (idx != -1) {
                     current[idx] = newUser
                 }
-                db.saveUsers(current)
+                AppLocks.data.withLock {
+                    db.saveUsers(current)
+                }
             }
         } catch (e: Exception) {
             addLog("Error al modificar usuario: ${e.message}")
@@ -547,7 +594,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val currentLocalUsers = users.value.toMutableList()
                 val removed = currentLocalUsers.removeAll { it.usuario.trim().lowercase() in testNamesSet }
                 if (removed) {
-                    db.saveUsers(currentLocalUsers)
+                    AppLocks.data.withLock {
+                        db.saveUsers(currentLocalUsers)
+                    }
                     addLog("🧹 [Depurar] Cuentas removidas también de la base de datos local.")
                 }
             }
@@ -561,15 +610,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun saveNtfyTopic(topic: String) {
         viewModelScope.launch {
             prefs.saveNtfyTopic(topic)
-            addLog("⚙️ [Ntfy.sh] Canal de notificaciones actualizado a: '${topic.ifEmpty { PreferencesManager.DEFAULT_NTFY_TOPIC }}'")
+            addLog("⚙️ [Ntfy] Canal de notificaciones actualizado a: '${topic.ifEmpty { PreferencesManager.DEFAULT_NTFY_TOPIC }}'")
         }
+    }
+
+    fun saveAllNtfyConfig(
+        reportTopic: String,
+        baseUrl: String,
+        linkEnabled: Boolean,
+        cmdTopic: String,
+        respTopic: String,
+        secret: String,
+        token: String
+    ) {
+        viewModelScope.launch {
+            prefs.saveNtfyTopic(reportTopic)
+            prefs.saveLinkConfig(linkEnabled, baseUrl, cmdTopic, respTopic, secret, token)
+            addLog("⚙️ [Ntfy] Configuración guardada. Servidor: $baseUrl | Enlace bot: ${if (linkEnabled) "🟢 Activado" else "🔴 Desactivado"}")
+        }
+    }
+
+    suspend fun sendTestLinkPush(targetBaseUrl: String, respTopic: String, token: String): Boolean {
+        addLog("📲 [Enlace Bot] Enviando push de prueba al canal RESP '$respTopic'...")
+        val ok = com.example.notifications.NtfyManager.publish(
+            context = getApplication(),
+            topic = respTopic,
+            message = "🔔 [SDMX RENEW] Mensaje de prueba del enlace app-bot en $respTopic",
+            title = "Prueba de Enlace RESP",
+            priority = 3
+        )
+        if (ok) {
+            addLog("✅ [Enlace Bot] Push de prueba enviado exitosamente a '$respTopic'")
+        } else {
+            addLog("❌ [Enlace Bot] Falló el push de prueba a '$respTopic'")
+        }
+        return ok
     }
 
     fun sendTestNtfyPush() {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                addLog("📲 [Ntfy.sh] Enviando notificación de prueba a https://ntfy.sh/${ntfyTopic.value}...")
+                val baseUrl = prefs.ntfyBaseUrl.stateIn(viewModelScope).value
+                addLog("📲 [Ntfy] Enviando notificación de prueba a $baseUrl/${ntfyTopic.value}...")
                 val success = com.example.notifications.NtfyManager.sendExecutionReport(
                     context = getApplication(),
                     isSuccess = true,
@@ -578,12 +661,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     recentLogs = LogManager.getLogs(getApplication())
                 )
                 if (success) {
-                    addLog("✅ [Ntfy.sh] Notificación de prueba enviada con éxito. Revisa https://ntfy.sh/${ntfyTopic.value}")
+                    addLog("✅ [Ntfy] Notificación de prueba enviada con éxito a ${ntfyTopic.value}")
                 } else {
-                    addLog("❌ [Ntfy.sh] No se pudo enviar la notificación de prueba.")
+                    addLog("❌ [Ntfy] No se pudo enviar la notificación de prueba.")
                 }
             } catch (e: Exception) {
-                addLog("❌ [Ntfy.sh] Error en prueba: ${e.message}")
+                addLog("❌ [Ntfy] Error en prueba: ${e.message}")
             } finally {
                 _isLoading.value = false
             }

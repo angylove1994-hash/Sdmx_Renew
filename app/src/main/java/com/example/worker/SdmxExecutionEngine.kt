@@ -3,6 +3,7 @@ package com.example.worker
 import android.content.Context
 import android.os.PowerManager
 import android.util.Log
+import com.example.data.AppLocks
 import com.example.data.LocalDatabase
 import com.example.data.LogManager
 import com.example.data.PreferencesManager
@@ -27,7 +28,7 @@ data class RenewalExecutionResult(
 
 object SdmxExecutionEngine {
     private const val TAG = "SdmxExecutionEngine"
-    private val executionMutex = Mutex()
+    val executionMutex = Mutex()
 
     suspend fun executeRenewalCycle(context: Context, triggerSource: String = "Automático"): RenewalExecutionResult = withContext(Dispatchers.IO) {
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
@@ -95,7 +96,7 @@ object SdmxExecutionEngine {
         val notificationHelper = NotificationHelper(context)
         val prefs = PreferencesManager(context)
         val api = SdmxApiService()
-        val db = LocalDatabase(context)
+        val db = LocalDatabase.get(context)
 
         // Read credentials (with fallback to fast sync prefs)
         var user = try { prefs.userSdmx.first() } catch (e: Exception) { "" }
@@ -236,22 +237,22 @@ object SdmxExecutionEngine {
         val newTableIds = api.getTableIds(context)
         var updatedIdsCount = 0
 
-        val updatedUsers = users.map { oldUser ->
-            if (vigentes.contains(oldUser)) {
-                val newId = newTableIds[oldUser.usuario]
-                if (newId != null) {
-                    updatedIdsCount++
-                    LogManager.addLog(context, "📝 [$triggerSource] ID actualizado: ${oldUser.usuario} → $newId")
-                    oldUser.copy(id = newId)
-                } else {
-                    oldUser
+        val vigentesUsernames = vigentes.map { it.usuario.trim().lowercase() }.toSet()
+        AppLocks.data.withLock {
+            db.atomicUpdate { currentUsers ->
+                for (i in currentUsers.indices) {
+                    val u = currentUsers[i]
+                    if (u.usuario.trim().lowercase() in vigentesUsernames) {
+                        val newId = newTableIds[u.usuario] ?: newTableIds[u.usuario.lowercase()]
+                        if (newId != null && newId != u.id) {
+                            updatedIdsCount++
+                            LogManager.addLog(context, "📝 [$triggerSource] ID actualizado: ${u.usuario} → $newId")
+                            currentUsers[i] = u.copy(id = newId)
+                        }
+                    }
                 }
-            } else {
-                oldUser
             }
         }
-
-        db.saveUsers(updatedUsers)
 
         // Step 4: Record execution times and calculate next run
         val now = System.currentTimeMillis()
